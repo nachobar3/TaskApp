@@ -104,6 +104,32 @@ function firstRunAt(): number {
   }
 }
 
+// Logo: checklist (tareas tildadas) sobre el gradiente de la marca.
+function TasksLogo({ box, icon }: { box: string; icon: string }) {
+  return (
+    <span
+      className={`${box} bg-gradient-to-br from-indigo-500 to-fuchsia-500 flex items-center justify-center text-white shadow-lg shadow-indigo-500/20`}
+    >
+      <svg
+        className={icon}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <path d="m3 7 2 2 4-4" />
+        <path d="M13 6h8" />
+        <path d="M13 12h8" />
+        <path d="m3 17 2 2 4-4" />
+        <path d="M13 18h8" />
+      </svg>
+    </span>
+  );
+}
+
 async function api(url: string, method: string, body?: unknown) {
   const res = await fetch(url, {
     method,
@@ -325,7 +351,7 @@ function ProjectButton({
       <span className="truncate flex-1">{p.name}</span>
       {unseen && (
         <span
-          className="shrink-0 inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full border border-sky-400/40 bg-sky-500/20 text-sky-200"
+          className="shrink-0 inline-flex items-center gap-1 text-[0.625rem] px-1.5 py-0.5 rounded-full border border-sky-400/40 bg-sky-500/20 text-sky-200"
           title="El loop dejó respuestas/novedades que todavía no viste"
         >
           <span className="relative flex h-1.5 w-1.5">
@@ -426,12 +452,10 @@ function Sidebar({
   return (
     <aside className="w-64 shrink-0 border-r border-zinc-800/80 bg-zinc-900 flex flex-col">
       <div className="px-4 py-3.5 border-b border-zinc-800/80 flex items-center gap-2.5">
-        <span className="h-7 w-7 rounded-lg bg-gradient-to-br from-indigo-500 to-fuchsia-500 flex items-center justify-center text-white font-bold text-sm shadow-lg shadow-indigo-500/20">
-          T
-        </span>
+        <TasksLogo box="h-7 w-7 rounded-lg" icon="h-4 w-4" />
         <div>
           <h1 className="font-semibold text-zinc-100 leading-tight">TaskApp</h1>
-          <p className="text-[11px] text-zinc-500 leading-tight">
+          <p className="text-[0.6875rem] text-zinc-500 leading-tight">
             Control de loops de Claude
           </p>
         </div>
@@ -450,7 +474,7 @@ function Sidebar({
         ))}
 
         {off.length > 0 && (
-          <div className="px-3 pt-3 pb-1 text-[10px] uppercase tracking-wide text-zinc-600 flex items-center gap-2">
+          <div className="px-3 pt-3 pb-1 text-[0.625rem] uppercase tracking-wide text-zinc-600 flex items-center gap-2">
             Apagados
             <span className="flex-1 h-px bg-zinc-800" />
           </div>
@@ -734,12 +758,12 @@ function ProjectPanel({
             >
               {d.name}
               {open > 0 && (
-                <span className="min-w-4 h-4 px-1 rounded-full bg-rose-500 text-white text-[10px] flex items-center justify-center">
+                <span className="min-w-4 h-4 px-1 rounded-full bg-rose-500 text-white text-[0.625rem] flex items-center justify-center">
                   {open}
                 </span>
               )}
               {unseenDoc && (
-                <span className="text-sky-400 text-[10px]" title="Tiene novedades del loop sin ver">
+                <span className="text-sky-400 text-[0.625rem]" title="Tiene novedades del loop sin ver">
                   ✦
                 </span>
               )}
@@ -1117,13 +1141,13 @@ function TaskRow({
         </span>
         <div className="flex items-center gap-2 ml-auto shrink-0">
           {task.created_by === "loop" && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/15 text-indigo-300">
+            <span className="text-[0.625rem] px-1.5 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/15 text-indigo-300">
               loop
             </span>
           )}
           {working ? (
             <span
-              className="inline-flex items-center gap-1.5 text-[11px] px-2 py-0.5 rounded-full border border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
+              className="inline-flex items-center gap-1.5 text-[0.6875rem] px-2 py-0.5 rounded-full border border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
               title={`última señal ${timeAgo(task.last_heartbeat!, now)}`}
             >
               <span className="relative flex h-2 w-2">
@@ -1134,7 +1158,7 @@ function TaskRow({
             </span>
           ) : stalled ? (
             <span
-              className="text-[11px] px-2 py-0.5 rounded-full border border-amber-500/40 bg-amber-500/15 text-amber-300"
+              className="text-[0.6875rem] px-2 py-0.5 rounded-full border border-amber-500/40 bg-amber-500/15 text-amber-300"
               title="El loop tomó la task pero no da señales (puede estar editando, o se cortó)."
             >
               sin señal
@@ -1144,7 +1168,7 @@ function TaskRow({
           )}
           {(task.status === "done" || task.stage !== "local") && (
             <span
-              className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full border ${STAGE_STYLE[task.stage]}`}
+              className={`inline-flex items-center gap-1 text-[0.625rem] px-1.5 py-0.5 rounded-full border ${STAGE_STYLE[task.stage]}`}
               title="Dónde vive esta feature / resolución"
             >
               📍 {task.stage}
@@ -1152,7 +1176,7 @@ function TaskRow({
           )}
           {openQuestions.length > 0 && (
             <span
-              className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border border-rose-500/50 bg-rose-500/20 text-rose-200"
+              className="inline-flex items-center gap-1 text-[0.6875rem] px-2 py-0.5 rounded-full border border-rose-500/50 bg-rose-500/20 text-rose-200"
               title="Preguntas sin responder"
             >
               ❓ {openQuestions.length}
@@ -1160,14 +1184,14 @@ function TaskRow({
           )}
           {committed ? (
             <span
-              className="text-[11px] px-1.5 py-0.5 rounded-full border border-emerald-500/30 bg-emerald-500/15 text-emerald-300 font-mono"
+              className="text-[0.6875rem] px-1.5 py-0.5 rounded-full border border-emerald-500/30 bg-emerald-500/15 text-emerald-300 font-mono"
               title={`commiteado ${task.committed_at ? timeAgo(task.committed_at, now) : ""}`}
             >
               ✓ {task.commit_hash!.slice(0, 7)}
             </span>
           ) : commitPending ? (
             <span
-              className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border border-amber-500/40 bg-amber-500/15 text-amber-300"
+              className="inline-flex items-center gap-1 text-[0.6875rem] px-2 py-0.5 rounded-full border border-amber-500/40 bg-amber-500/15 text-amber-300"
               title="Pedido de commit. El loop lo hará en su próxima iteración."
             >
               ⏳ commit
@@ -1182,7 +1206,7 @@ function TaskRow({
           ) : (
             <button
               onClick={requestCommit}
-              className="text-[11px] px-2 py-0.5 rounded-full border border-zinc-700 text-zinc-400 hover:text-emerald-300 hover:border-emerald-500/40 transition-colors"
+              className="text-[0.6875rem] px-2 py-0.5 rounded-full border border-zinc-700 text-zinc-400 hover:text-emerald-300 hover:border-emerald-500/40 transition-colors"
               title="Pedir que el loop commitee esta task"
             >
               commit
@@ -1190,7 +1214,7 @@ function TaskRow({
           )}
           <button
             onClick={() => patch({ tested: !task.tested })}
-            className={`inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border transition-colors ${
+            className={`inline-flex items-center gap-1 text-[0.6875rem] px-2 py-0.5 rounded-full border transition-colors ${
               task.tested
                 ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
                 : "border-zinc-700 text-zinc-400 hover:border-emerald-500/40 hover:text-emerald-300"
@@ -1202,7 +1226,7 @@ function TaskRow({
           {task.stage !== "production" && (
             <button
               onClick={() => patch({ stage: "production", status: "done" })}
-              className="text-[11px] px-2 py-0.5 rounded-full border border-zinc-700 text-zinc-400 hover:text-emerald-300 hover:border-emerald-500/40 transition-colors"
+              className="text-[0.6875rem] px-2 py-0.5 rounded-full border border-zinc-700 text-zinc-400 hover:text-emerald-300 hover:border-emerald-500/40 transition-colors"
               title="Archivar: la da por hecha y la manda a 'En producción' (colapsado abajo)"
             >
               📦 archivar
@@ -1230,7 +1254,7 @@ function TaskRow({
                 placeholder="Detalle / contexto. Pegá o arrastrá imágenes para adjuntarlas."
                 className={`${INPUT} resize-y`}
               />
-              <label className="block text-[11px] uppercase tracking-wide text-zinc-500">
+              <label className="block text-[0.6875rem] uppercase tracking-wide text-zinc-500">
                 Resumen
               </label>
               <textarea
@@ -1264,7 +1288,7 @@ function TaskRow({
               )}
               {task.summary ? (
                 <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/[0.06] p-2.5">
-                  <div className="text-[10px] uppercase tracking-wide text-emerald-400/80 mb-1">
+                  <div className="text-[0.625rem] uppercase tracking-wide text-emerald-400/80 mb-1">
                     📝 Resumen
                   </div>
                   <div className="md">
@@ -1275,7 +1299,7 @@ function TaskRow({
                 </div>
               ) : (
                 isDone && (
-                  <p className="text-[11px] text-amber-400/70">
+                  <p className="text-[0.6875rem] text-amber-400/70">
                     ⚠ Tarea hecha sin resumen.
                   </p>
                 )
@@ -1425,7 +1449,7 @@ function StatusBadge({ status }: { status: string }) {
   };
   return (
     <span
-      className={`text-[10px] px-1.5 py-0.5 rounded border ${map[status] ?? map.todo}`}
+      className={`text-[0.625rem] px-1.5 py-0.5 rounded border ${map[status] ?? map.todo}`}
     >
       {status.replace("_", " ")}
     </span>
@@ -1450,17 +1474,17 @@ function QuestionBlock({
   if (q.answered) {
     return (
       <div className="rounded-lg border border-zinc-800 bg-zinc-800/40 p-3">
-        <div className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1">
+        <div className="text-[0.625rem] uppercase tracking-wide text-zinc-500 mb-1">
           ❓ Pregunta
         </div>
         <div className="md">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{q.text}</ReactMarkdown>
         </div>
         <div className="mt-2 pt-2 border-t border-zinc-800/80">
-          <div className="text-[10px] uppercase tracking-wide text-emerald-500/70 mb-1">
+          <div className="text-[0.625rem] uppercase tracking-wide text-emerald-500/70 mb-1">
             ↳ Tu respuesta
           </div>
-          <p className="text-emerald-300 whitespace-pre-wrap text-[13px] leading-relaxed">
+          <p className="text-emerald-300 whitespace-pre-wrap text-[0.8125rem] leading-relaxed">
             {q.answer}
           </p>
         </div>
@@ -1470,7 +1494,7 @@ function QuestionBlock({
 
   return (
     <div className="rounded-lg border border-rose-500/40 bg-rose-500/10 p-3">
-      <div className="text-[10px] uppercase tracking-wide text-rose-300/80 mb-1">
+      <div className="text-[0.625rem] uppercase tracking-wide text-rose-300/80 mb-1">
         ❓ Claude pregunta
       </div>
       <div className="md">
@@ -1510,16 +1534,16 @@ function FollowupBlock({ f }: { f: TaskView["followups"][number] }) {
           : "border-indigo-500/40 bg-indigo-500/10"
       }`}
     >
-      <div className="text-[10px] uppercase tracking-wide text-indigo-300/80 mb-1">
+      <div className="text-[0.625rem] uppercase tracking-wide text-indigo-300/80 mb-1">
         ↩ Pediste
       </div>
-      <p className="text-zinc-200 whitespace-pre-wrap text-[13px] leading-relaxed">
+      <p className="text-zinc-200 whitespace-pre-wrap text-[0.8125rem] leading-relaxed">
         {f.text}
       </p>
       {f.resolved_at ? (
         f.response && (
           <div className="mt-2 pt-2 border-t border-zinc-800/80">
-            <div className="text-[10px] uppercase tracking-wide text-emerald-500/70 mb-1">
+            <div className="text-[0.625rem] uppercase tracking-wide text-emerald-500/70 mb-1">
               ↳ Claude hizo
             </div>
             <div className="md">
@@ -1528,7 +1552,7 @@ function FollowupBlock({ f }: { f: TaskView["followups"][number] }) {
           </div>
         )
       ) : (
-        <p className="mt-2 text-[11px] text-indigo-300/70">
+        <p className="mt-2 text-[0.6875rem] text-indigo-300/70">
           ⏳ pendiente — un worker lo va a retomar
         </p>
       )}
@@ -1592,9 +1616,7 @@ function Empty() {
   return (
     <div className="h-full flex items-center justify-center text-zinc-600">
       <div className="text-center">
-        <div className="mx-auto mb-4 h-12 w-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-fuchsia-500 flex items-center justify-center text-white font-bold text-xl shadow-lg shadow-indigo-500/20">
-          T
-        </div>
+        <TasksLogo box="mx-auto mb-4 h-12 w-12 rounded-2xl" icon="h-7 w-7" />
         <p className="text-lg text-zinc-300">Creá tu primer proyecto</p>
         <p className="text-sm">Usá el botón “+ Proyecto” en la barra lateral.</p>
       </div>
