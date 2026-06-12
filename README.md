@@ -51,10 +51,54 @@ follow-up sin pisar el resumen original.
 
 ```bash
 npm install
-npm run dev      # http://localhost:3000
+npm run dev      # http://localhost:7777
 ```
 
 La base se crea sola en `~/.taskapp/taskapp.db` (o donde apunte `$TASKAPP_DB`).
+
+## Acceso remoto / mobile (PWA)
+
+La app es responsive y se instala como PWA. Como TaskApp corre en TU máquina
+(los workers lanzan `claude` localmente), el acceso desde el celular o fuera de
+casa se resuelve exponiendo el server local de forma privada con
+[Tailscale](https://tailscale.com) (gratis para uso personal):
+
+```bash
+# 1. En la PC: instalar y loguearse
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+
+# 2. Publicar la app dentro de tu tailnet (HTTPS con certificado válido)
+sudo tailscale serve --bg http://localhost:7777
+tailscale serve status   # muestra la URL https://<maquina>.<tailnet>.ts.net
+```
+
+3. En el teléfono: instalá la app de Tailscale, logueate con la misma cuenta, y
+   abrí la URL `https://...ts.net`. Desde ahí podés **instalarla como PWA**
+   (Android: menú ⋮ → "Instalar app" · iOS: compartir → "Agregar a pantalla de
+   inicio"). Funciona desde cualquier lugar del mundo, con la VPN de Tailscale
+   activa en el teléfono.
+
+4. **Si usás el dev server** (`npm run dev`), agregá tu hostname de Tailscale a
+   `allowedDevOrigins` en `next.config.ts` (reemplazando el que está): el modo
+   dev de Next bloquea sus recursos para hosts que no conoce y la app carga
+   pero no responde (botones muertos). Con `npm start` (producción) no hace
+   falta.
+
+> ⚠️ **NUNCA expongas TaskApp a internet público sin autenticación** (port
+> forwarding, túneles abiertos, etc.): la app no tiene login y puede lanzar
+> workers con permisos totales en tu máquina — sería ejecución remota de
+> código. Tailscale es seguro porque la URL solo existe dentro de tu red
+> privada. Si necesitás una URL pública, poné un proxy con login adelante
+> (p. ej. Cloudflare Tunnel + Cloudflare Access).
+
+Para tenerla siempre disponible conviene el server de producción en vez del
+dev server:
+
+```bash
+npm run build
+npm start        # también en :7777
+```
 
 ## Usar el CLI desde los loops
 

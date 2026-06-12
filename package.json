@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "next dev -p 7777",
     "build": "next build",
-    "start": "next start",
+    "start": "next start -p 7777",
     "lint": "eslint",
     "cli": "node cli/taskapp.mjs"
   },

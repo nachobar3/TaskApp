@@ -45,3 +45,7 @@ next-env.d.ts
 *.db
 *.db-shm
 *.db-wal
+
+# TLS certs/keys (tailscale cert los escribe en cwd; nunca commitearlos)
+*.crt
+*.key

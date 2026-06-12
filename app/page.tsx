@@ -172,6 +172,8 @@ export default function Home() {
   const [projects, setProjects] = useState<ProjectView[]>([]);
   const [selectedProject, setSelectedProject] = useState<number | null>(null);
   const [selectedDoc, setSelectedDoc] = useState<number | null>(null);
+  // Drawer del sidebar en mobile (en md+ el sidebar es columna fija).
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [seen, setSeen] = useState<SeenMap>(() => loadSeen(PROJECT_SEEN_KEY));
   const [taskSeen, setTaskSeen] = useState<SeenMap>(() => loadSeen(TASK_SEEN_KEY));
   const [firstRun] = useState(firstRunAt);
@@ -269,18 +271,64 @@ export default function Home() {
     });
   }, [projects, selectedProject]);
 
+  const totalOpenQuestions = projects.reduce((n, p) => n + openQuestionCount(p), 0);
+
   return (
-    <div className="flex h-screen text-sm text-zinc-300">
-      <Sidebar
-        projects={projects}
-        selected={selectedProject}
-        seen={seen}
-        onSelect={(id) => {
-          setSelectedProject(id);
-          setSelectedDoc(null);
-        }}
-        reload={load}
-      />
+    <div className="flex h-dvh flex-col md:flex-row text-sm text-zinc-300">
+      {/* Top bar — solo mobile */}
+      <header className="md:hidden shrink-0 flex items-center gap-2.5 px-3 py-2.5 border-b border-zinc-800/80 bg-zinc-900">
+        <button
+          onClick={() => setSidebarOpen(true)}
+          className="relative p-1.5 -ml-1 rounded-md text-zinc-300 hover:bg-zinc-800"
+          aria-label="Abrir proyectos"
+        >
+          <svg
+            className="h-5 w-5"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+          >
+            <path d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+          {totalOpenQuestions > 0 && (
+            <span className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-rose-500" />
+          )}
+        </button>
+        <TasksLogo box="h-6 w-6 rounded-md" icon="h-3.5 w-3.5" />
+        <span className="font-semibold text-zinc-100 truncate">
+          {project?.name ?? "TaskApp"}
+        </span>
+      </header>
+
+      {/* Backdrop del drawer */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 z-30 bg-black/60 md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
+      {/* Sidebar: drawer deslizable en mobile, columna fija en md+ */}
+      <div
+        className={`${
+          sidebarOpen ? "flex" : "hidden"
+        } md:flex fixed inset-y-0 left-0 z-40 md:static md:z-auto`}
+      >
+        <Sidebar
+          projects={projects}
+          selected={selectedProject}
+          seen={seen}
+          onSelect={(id) => {
+            setSelectedProject(id);
+            setSelectedDoc(null);
+            setSidebarOpen(false);
+          }}
+          reload={load}
+        />
+      </div>
+
       <main className="flex-1 overflow-y-auto bg-zinc-950">
         {!project ? (
           <Empty />
@@ -622,7 +670,7 @@ function ProjectPanel({
   }
 
   return (
-    <div className="max-w-4xl mx-auto p-6">
+    <div className="max-w-4xl mx-auto p-3 sm:p-6">
       <div className="flex items-center justify-between mb-1">
         <h2 className="text-xl font-semibold text-zinc-100">{project.name}</h2>
         <button
@@ -1114,8 +1162,9 @@ function TaskRow({
             : "border-zinc-800 bg-zinc-900"
       }`}
     >
-      {/* Header — siempre visible; togglea el detalle */}
-      <div className="flex items-center gap-2">
+      {/* Header — siempre visible; togglea el detalle. En pantallas angostas
+          los badges bajan a una segunda línea (flex-wrap). */}
+      <div className="flex flex-wrap items-center gap-2">
         <button
           onClick={toggle}
           className="shrink-0 w-4 text-center text-zinc-500 hover:text-zinc-200 transition-colors"
@@ -1133,13 +1182,13 @@ function TaskRow({
         )}
         <span
           onClick={toggle}
-          className={`font-medium truncate cursor-pointer ${
+          className={`flex-1 min-w-0 font-medium truncate cursor-pointer ${
             isDone ? "line-through text-zinc-600" : "text-zinc-100"
           }`}
         >
           {task.title}
         </span>
-        <div className="flex items-center gap-2 ml-auto shrink-0">
+        <div className="flex flex-wrap items-center justify-end gap-2 ml-auto">
           {task.created_by === "loop" && (
             <span className="text-[0.625rem] px-1.5 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/15 text-indigo-300">
               loop
@@ -1237,7 +1286,7 @@ function TaskRow({
 
       {/* Detalle — solo cuando está expandida */}
       {expanded && (
-        <div className="mt-3 pl-6 space-y-3">
+        <div className="mt-3 pl-1.5 sm:pl-6 space-y-3">
           {editing ? (
             <div className="space-y-2">
               <input
