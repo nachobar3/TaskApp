@@ -1,131 +1,161 @@
 # TaskApp
 
-App local para coordinar varias sesiones/loops de Claude que corren por
-proyecto. Vos administrás tareas desde una UI web; los loops las leen, reportan
-progreso y te hacen preguntas que respondés en la misma UI.
+A local web app to run **Claude Code agents across your projects from a task
+board** — including from your phone, from anywhere.
+
+You manage tasks per project in a web UI. Claude Code agents (long-running
+interactive loops, or ephemeral workers launched by the app) pick those tasks
+up, work inside each project's repo, report progress, ask you questions when
+they need a decision, and keep a per-task thread you can follow up on. The
+whole thing runs on **your machine**: your repos, your Claude Code, your data.
 
 ```
-project ─┬─ document (To-Do, Bugs, …) ─┬─ task (status · stage · tested) ─┬─ question
-         │                             │                                  └─ answer
-         └─ (un proyecto por sesión de Claude)
+You (web UI / phone PWA)          Claude Code agents
+        │                                 │
+        ▼                                 ▼
+   Next.js app  ◄──── SQLite ────►  taskapp CLI
+ (localhost:7777)  (~/.taskapp/)   (runs inside each repo)
 ```
 
-- **status**: `todo · in_progress · blocked · done` (lo maneja el loop)
-- **stage**: `local · develop · production` — dónde quedó el resultado (lo maneja el loop)
-- **tested**: lo tildás vos cuando probaste la feature
-- **question**: el loop te pregunta algo → badge de notificación en la UI → respondés ahí
+> The UI texts, the CLI output and the agent protocol are currently in
+> Spanish. PRs welcome.
 
-## Arquitectura
+## Features
 
-- **App Next.js** (`app/`) en `localhost:3000`: la UI. Hace polling cada 2s.
-- **SQLite** (`~/.taskapp/taskapp.db`, WAL): fuente de verdad, compartida.
-- **CLI** (`cli/taskapp.mjs`): lo usan los loops, va directo a SQLite (funciona
-  con la app cerrada).
-- **Skill** (`skills/taskapp/SKILL.md`): el protocolo que cada proyecto le da a
-  su loop.
+- **Projects → documents → tasks**, with status (`todo / in_progress /
+  blocked / done`), stage (`local / develop / production`), a human-only
+  "tested" flag, and image attachments (paste screenshots into a task).
+- **Blocking questions**: when an agent needs a decision it asks, the task
+  turns red in the UI, you answer from the board and the agent resumes.
+- **Task threads (follow-ups)**: ask for more on an already-done task; it
+  reopens as a continuation with the full thread (original request, summary,
+  Q&A) as context.
+- **Ephemeral workers**: the app spawns `claude -p` in the project's repo when
+  you create a task, answer a question or send a follow-up (per-project
+  toggle), or manually with a "Run now" button. Workers drain the queue and
+  exit; a PID guard prevents double-spawning.
+- **Git on demand**: you request commits/pushes from the UI; the agent
+  executes them and reports back the hash. Agents never touch git on their own.
+- **Mobile + PWA**: responsive UI, installable on your phone, reachable from
+  anywhere via Tailscale (see below).
 
-La app y el CLI comparten el esquema en `lib/schema.mjs`.
+## Requirements
 
-## Workers efímeros (lanzar Claude desde la app)
+- Node.js 20+
+- [Claude Code](https://claude.com/claude-code) installed, with `claude`
+  available in your `PATH`.
 
-Además del loop interactivo en una terminal, la app puede lanzar **workers**:
-procesos `claude -p --dangerously-skip-permissions` que corren en el `path` del
-proyecto, drenan la cola de tareas siguiendo la skill y terminan
-(`lib/worker.ts`).
-
-- **⚡ auto worker** (toggle por proyecto): la app lanza un worker cuando creás
-  una tarea, respondés una pregunta, mandás un follow-up o pedís commit/push.
-  No lo prendas si corrés un loop interactivo en una terminal para ese proyecto.
-- **▶ Correr ahora**: lanza un worker manualmente (aunque auto esté apagado).
-- Nunca hay dos workers por proyecto (guard por PID vivo). Una pregunta
-  bloqueante termina el worker; responderla en la UI lanza otro que retoma.
-- Logs por proyecto en `~/.taskapp/logs/`. Binario configurable con
-  `$TASKAPP_CLAUDE_BIN` (default: `claude` en el PATH del server).
-
-**Follow-ups (hilo por task)**: en una task hecha podés "pedir algo más" desde
-la UI; eso la reabre como continuación. El worker lee el hilo completo (body,
-resumen, preguntas, follow-ups) y su próximo `taskapp done` responde el
-follow-up sin pisar el resumen original.
-
-## Levantar la UI
+## Install & run
 
 ```bash
+git clone https://github.com/nachobar3/TaskApp.git
+cd TaskApp
 npm install
-npm run dev      # http://localhost:7777
+
+npm run dev      # dev server on http://localhost:7777
+# or, for an always-on setup:
+npm run build && npm start
 ```
 
-La base se crea sola en `~/.taskapp/taskapp.db` (o donde apunte `$TASKAPP_DB`).
+The SQLite database is created automatically at `~/.taskapp/taskapp.db`
+(override with `$TASKAPP_DB`).
 
-## Acceso remoto / mobile (PWA)
-
-La app es responsive y se instala como PWA. Como TaskApp corre en TU máquina
-(los workers lanzan `claude` localmente), el acceso desde el celular o fuera de
-casa se resuelve exponiendo el server local de forma privada con
-[Tailscale](https://tailscale.com) (gratis para uso personal):
+Install the CLI used by the agents (once):
 
 ```bash
-# 1. En la PC: instalar y loguearse
+npm link         # makes the `taskapp` command global
+```
+
+## Connect a project
+
+1. Create the project in the UI with its **absolute repo path**. The CLI maps
+   the current working directory to the project automatically — agents never
+   need to pass a project name.
+2. Give the agents the protocol skill, either globally:
+
+   ```bash
+   ln -s "$(pwd)/skills/taskapp" ~/.claude/skills/taskapp
+   ```
+
+   or per project (`<repo>/.claude/skills/taskapp`).
+
+## Two ways to run agents
+
+**Interactive loop** — open Claude Code in the repo and run a loop with the
+`taskapp` skill (e.g. `/loop taskapp`). You keep the terminal, you approve
+permissions, you can intervene. The UI shows the loop as active while it
+reports.
+
+**Ephemeral workers** — flip the project's "⚡ auto worker" toggle (or press
+"▶ Run now"). The app spawns:
+
+```
+claude --dangerously-skip-permissions -p "<work the queue>"
+```
+
+in the project's path; the worker processes tasks, re-checks the queue, and
+exits. If it blocks on a question, answering from the UI spawns a new worker
+that resumes the thread.
+
+> ⚠️ Workers run with `--dangerously-skip-permissions`: the agent can run any
+> command inside your machine without asking. Only enable auto-worker on
+> projects where you're comfortable with that, and don't combine it with an
+> interactive loop on the same project. Worker logs land in
+> `~/.taskapp/logs/<project>.log`. Use `$TASKAPP_CLAUDE_BIN` to point to a
+> specific `claude` binary.
+
+## Remote access & phone PWA (Tailscale)
+
+TaskApp runs on your machine, so remote access means exposing your local
+server **privately** with [Tailscale](https://tailscale.com) (free for
+personal use):
+
+```bash
+# 1. On your computer: install and log in
 curl -fsSL https://tailscale.com/install.sh | sh
 sudo tailscale up
+sudo tailscale set --operator=$USER   # optional: manage serve without sudo
 
-# 2. Publicar la app dentro de tu tailnet (HTTPS con certificado válido)
-sudo tailscale serve --bg http://localhost:7777
-tailscale serve status   # muestra la URL https://<maquina>.<tailnet>.ts.net
+# 2. Publish the app inside your tailnet (HTTPS with a valid certificate)
+tailscale serve --bg http://localhost:7777
+tailscale serve status                # prints https://<machine>.<tailnet>.ts.net
 ```
 
-3. En el teléfono: instalá la app de Tailscale, logueate con la misma cuenta, y
-   abrí la URL `https://...ts.net`. Desde ahí podés **instalarla como PWA**
-   (Android: menú ⋮ → "Instalar app" · iOS: compartir → "Agregar a pantalla de
-   inicio"). Funciona desde cualquier lugar del mundo, con la VPN de Tailscale
-   activa en el teléfono.
+If certificate issuance fails, enable **MagicDNS** and **HTTPS Certificates**
+in the [admin console DNS page](https://login.tailscale.com/admin/dns), and
+**Serve** when prompted. The serve config persists across reboots.
 
-4. **Si usás el dev server** (`npm run dev`), agregá tu hostname de Tailscale a
-   `allowedDevOrigins` en `next.config.ts` (reemplazando el que está): el modo
-   dev de Next bloquea sus recursos para hosts que no conoce y la app carga
-   pero no responde (botones muertos). Con `npm start` (producción) no hace
-   falta.
+3. On your phone: install the Tailscale app, log in with the same account,
+   turn the VPN on, and open your `https://….ts.net` URL. Then install it as a
+   PWA (Android Chrome: ⋮ → *Install app* · iOS Safari: Share → *Add to Home
+   Screen*).
 
-> ⚠️ **NUNCA expongas TaskApp a internet público sin autenticación** (port
-> forwarding, túneles abiertos, etc.): la app no tiene login y puede lanzar
-> workers con permisos totales en tu máquina — sería ejecución remota de
-> código. Tailscale es seguro porque la URL solo existe dentro de tu red
-> privada. Si necesitás una URL pública, poné un proxy con login adelante
-> (p. ej. Cloudflare Tunnel + Cloudflare Access).
+The dev config already allows `*.ts.net` origins (`allowedDevOrigins` in
+`next.config.ts`); production (`npm start`) needs nothing.
 
-Para tenerla siempre disponible conviene el server de producción en vez del
-dev server:
+> ⚠️ **Never expose TaskApp to the public internet without authentication**
+> (port forwarding, open tunnels, etc.). The app has no login and can launch
+> workers with full permissions on your machine — that's remote code
+> execution. Tailscale is safe because the URL only exists inside your private
+> network. If you need a public URL, put an authenticating proxy in front
+> (e.g. Cloudflare Tunnel + Cloudflare Access).
 
-```bash
-npm run build
-npm start        # también en :7777
-```
+## Configuration reference
 
-## Usar el CLI desde los loops
+| What | Where |
+|---|---|
+| Database | `~/.taskapp/taskapp.db` (override: `$TASKAPP_DB`) |
+| Attachments | `~/.taskapp/attachments/` |
+| Worker logs | `~/.taskapp/logs/` |
+| Claude binary for workers | `$TASKAPP_CLAUDE_BIN` (default: `claude`) |
+| Port | 7777 (`npm run dev` and `npm start`) |
+| PWA icons | regenerate with `node scripts/gen-icons.mjs` |
 
-Instalá el comando `taskapp` en el PATH (una vez):
+## Architecture notes
 
-```bash
-npm link         # deja `taskapp` global apuntando a este repo
-```
-
-…o invocá la ruta directa: `node /ruta/a/TaskApp/cli/taskapp.mjs`.
-
-```bash
-taskapp ensure-project --name "MiProyecto" --path "$(pwd)"
-taskapp tasks --project "MiProyecto" --status todo,in_progress --json
-taskapp update-task 3 --status done --stage develop
-taskapp ask 3 "¿SQLite o Postgres?" --block
-taskapp questions --task 3 --answered --json
-taskapp help
-```
-
-## Conectar un proyecto
-
-Copiá o symlinkeá la skill a cada proyecto:
-
-```bash
-mkdir -p /ruta/a/MiProyecto/.claude/skills
-ln -s /ruta/a/TaskApp/skills/taskapp /ruta/a/MiProyecto/.claude/skills/taskapp
-```
-
-El loop de ese proyecto invoca la skill `taskapp` y sigue el protocolo.
+- The Next.js app and the CLI share the schema (`lib/schema.mjs`) and talk to
+  the same SQLite file (WAL); the CLI works even with the UI closed.
+- The UI polls `/api/state` every 2s — no websockets, no cache, the service
+  worker is a pass-through (real-time app; caching would show stale state).
+- Worker spawning lives in `lib/worker.ts`; the agent protocol in
+  `skills/taskapp/SKILL.md`.
