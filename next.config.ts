@@ -6,8 +6,9 @@ const nextConfig: NextConfig = {
   serverExternalPackages: ["better-sqlite3"],
   // The dev server blocks its own assets (/_next/*) for unknown hosts, which
   // breaks hydration behind a Tailscale proxy (page renders, buttons dead).
-  // Allow any tailnet hostname — dev-only; `next start` doesn't need this.
-  allowedDevOrigins: ["*.ts.net"],
+  // Tailscale hostnames are machine.tailnet.ts.net (two labels) and each `*`
+  // matches a single label. Dev-only; `next start` doesn't need this.
+  allowedDevOrigins: ["*.*.ts.net"],
 };
 
 export default nextConfig;
