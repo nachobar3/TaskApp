@@ -21,8 +21,9 @@ const WORKER_PROMPT = `Sos un worker autónomo de TaskApp para este proyecto. In
 2. Procesá la cola: tareas en status todo/in_progress (\`taskapp tasks --status todo,in_progress --json\`). Una tarea con follow-ups abiertos es una CONTINUACIÓN: su hilo (body original, resumen previo, preguntas respondidas y los follow-ups) es tu contexto — leelo entero con \`taskapp show <id> --json\` antes de trabajar.
 3. Atendé también \`taskapp git-pending\` según el protocolo.
 4. Si necesitás una decisión del humano, hacé \`taskapp ask <id> ... --block\` y TERMINÁ tu ejecución inmediatamente: cuando el humano responda en la UI, otro worker va a arrancar y retomar. No esperes la respuesta vos.
-5. Antes de terminar, volvé a chequear la cola (\`taskapp tasks --status todo,in_progress --json\` y \`taskapp git-pending\`): si entró trabajo nuevo mientras trabajabas, procesalo también.
-6. Cuando no quede nada pendiente (o quedaste bloqueado en una pregunta), terminá.`;
+5. Comandos largos (suites de tests, builds, seeds): corrélos en FOREGROUND y esperá el resultado en esta misma ejecución, prefijando un heartbeat (\`taskapp heartbeat <id>; <comando>\`). NUNCA dejes un proceso en background y termines "para esperar el resultado": el proceso muere con vos y nadie te relanza cuando termina. Si algo tarda 20 minutos, esperalo los 20 minutos.
+6. Antes de terminar, volvé a chequear la cola (\`taskapp tasks --status todo,in_progress --json\` y \`taskapp git-pending\`): si entró trabajo nuevo mientras trabajabas, procesalo también.
+7. Cuando no quede nada pendiente (o quedaste bloqueado en una pregunta), terminá. Nunca dejes una task in_progress sin un proceso tuyo trabajándola: o la terminás, o la bloqueás con un ask, o la devolvés a todo explicando en qué quedó.`;
 
 function logsDir(): string {
   const dir = path.join(

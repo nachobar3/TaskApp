@@ -20,9 +20,17 @@ CLI `taskapp`, que escribe en una base SQLite compartida con la UI
   - Si hacés un `ask --block`, terminá tu ejecución inmediatamente — NO esperes
     la respuesta: cuando el humano responda en la UI, la app lanza otro worker
     que retoma.
+  - **Comandos largos (tests, builds, seeds): en foreground y los esperás** en
+    esta misma ejecución, con heartbeat prefijado:
+    `taskapp heartbeat <id>; pnpm test:e2e`. NUNCA dejes un proceso en
+    background y termines "para esperar el resultado": el proceso muere con tu
+    ejecución y nadie te relanza cuando termina.
   - Antes de terminar, volvé a chequear `taskapp tasks --status todo,in_progress`
     y `taskapp git-pending`: si entró trabajo nuevo mientras trabajabas,
     procesalo también. Terminás solo cuando no queda nada (o estás bloqueado).
+  - Nunca termines dejando una task `in_progress` sin nadie trabajándola: o la
+    terminás, o la bloqueás con un `ask`, o la devolvés a `todo` explicando en
+    qué quedó.
 
 ## Asociación automática por directorio
 

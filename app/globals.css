@@ -47,10 +47,16 @@ select option {
    restore headings/lists/code/etc. scoped under .md */
 .md {
   /* Lo que escribe Claude (resúmenes, preguntas, respuestas a follow-ups) se
-     lee más grande que el resto de la UI. Perilla única de tamaño. */
-  font-size: 17px;
-  line-height: 1.6;
+     lee más grande que el resto de la UI — pero solo en desktop; en mobile
+     manda la densidad. Perillas únicas de tamaño acá. */
+  font-size: 13px;
+  line-height: 1.55;
   color: #d4d4d8;
+}
+@media (min-width: 640px) {
+  .md {
+    font-size: 17px;
+  }
 }
 .md > :first-child {
   margin-top: 0;

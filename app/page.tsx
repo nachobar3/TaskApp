@@ -274,7 +274,7 @@ export default function Home() {
   const totalOpenQuestions = projects.reduce((n, p) => n + openQuestionCount(p), 0);
 
   return (
-    <div className="flex h-dvh flex-col md:flex-row text-sm text-zinc-300">
+    <div className="flex h-dvh flex-col md:flex-row text-[0.8125rem] sm:text-sm text-zinc-300">
       {/* Top bar — solo mobile */}
       <header className="md:hidden shrink-0 flex items-center gap-2.5 px-3 py-2.5 border-b border-zinc-800/80 bg-zinc-900">
         <button
@@ -672,7 +672,7 @@ function ProjectPanel({
   return (
     <div className="max-w-4xl mx-auto p-3 sm:p-6">
       <div className="flex items-center justify-between mb-1">
-        <h2 className="text-xl font-semibold text-zinc-100">{project.name}</h2>
+        <h2 className="text-lg sm:text-xl font-semibold text-zinc-100">{project.name}</h2>
         <button
           onClick={removeProject}
           className="text-xs text-zinc-600 hover:text-rose-400 transition-colors"
@@ -849,6 +849,7 @@ function ProjectPanel({
       {doc ? (
         <DocPanel
           doc={doc}
+          workerRunning={project.worker_running}
           reload={reload}
           isTaskUnseen={isTaskUnseen}
           markTaskSeen={markTaskSeen}
@@ -862,11 +863,13 @@ function ProjectPanel({
 
 function DocPanel({
   doc,
+  workerRunning,
   reload,
   isTaskUnseen,
   markTaskSeen,
 }: {
   doc: DocumentView;
+  workerRunning: boolean;
   reload: () => Promise<unknown>;
   isTaskUnseen: (t: TaskView) => boolean;
   markTaskSeen: (taskId: number) => void;
@@ -1022,6 +1025,7 @@ function DocPanel({
         <TaskRow
           key={t.id}
           task={t}
+          workerRunning={workerRunning}
           reload={reload}
           unseen={isTaskUnseen(t)}
           onSeen={() => markTaskSeen(t.id)}
@@ -1038,6 +1042,7 @@ function DocPanel({
               <TaskRow
                 key={t.id}
                 task={t}
+                workerRunning={workerRunning}
                 reload={reload}
                 unseen={isTaskUnseen(t)}
                 onSeen={() => markTaskSeen(t.id)}
@@ -1056,11 +1061,13 @@ function DocPanel({
 
 function TaskRow({
   task,
+  workerRunning,
   reload,
   unseen,
   onSeen,
 }: {
   task: TaskView;
+  workerRunning: boolean;
   reload: () => Promise<unknown>;
   unseen: boolean;
   onSeen: () => void;
@@ -1093,7 +1100,10 @@ function TaskRow({
     task.status === "in_progress" &&
     !!task.last_heartbeat &&
     now - parseUTC(task.last_heartbeat) < WORKING_FRESH_MS;
-  const stalled = task.status === "in_progress" && !working;
+  // Sin heartbeat fresco pero con el worker del proyecto vivo: típico de un
+  // comando largo (tests, build). Solo es "sin señal" si tampoco hay worker.
+  const workerBusy = task.status === "in_progress" && !working && workerRunning;
+  const stalled = task.status === "in_progress" && !working && !workerRunning;
 
   async function patch(p: Record<string, unknown>) {
     await api(`/api/tasks/${task.id}`, "PATCH", p);
@@ -1190,7 +1200,7 @@ function TaskRow({
         </span>
         <div className="flex flex-wrap items-center justify-end gap-2 ml-auto">
           {task.created_by === "loop" && (
-            <span className="text-[0.625rem] px-1.5 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/15 text-indigo-300">
+            <span className="hidden sm:inline text-[0.625rem] px-1.5 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/15 text-indigo-300">
               loop
             </span>
           )}
@@ -1205,10 +1215,18 @@ function TaskRow({
               </span>
               trabajando
             </span>
+          ) : workerBusy ? (
+            <span
+              className="inline-flex items-center gap-1.5 text-[0.6875rem] px-2 py-0.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 text-emerald-300/90"
+              title="El worker está corriendo pero sin señal reciente — típico de un comando largo (tests, build)."
+            >
+              <span className="h-2 w-2 rounded-full bg-emerald-400/70" />
+              worker activo
+            </span>
           ) : stalled ? (
             <span
               className="text-[0.6875rem] px-2 py-0.5 rounded-full border border-amber-500/40 bg-amber-500/15 text-amber-300"
-              title="El loop tomó la task pero no da señales (puede estar editando, o se cortó)."
+              title="Nadie está trabajando esta task ahora (el loop/worker se cortó o terminó sin cerrarla). Relanzá con ▶ Correr ahora."
             >
               sin señal
             </span>
@@ -1217,7 +1235,7 @@ function TaskRow({
           )}
           {(task.status === "done" || task.stage !== "local") && (
             <span
-              className={`inline-flex items-center gap-1 text-[0.625rem] px-1.5 py-0.5 rounded-full border ${STAGE_STYLE[task.stage]}`}
+              className={`hidden sm:inline-flex items-center gap-1 text-[0.625rem] px-1.5 py-0.5 rounded-full border ${STAGE_STYLE[task.stage]}`}
               title="Dónde vive esta feature / resolución"
             >
               📍 {task.stage}
@@ -1231,55 +1249,21 @@ function TaskRow({
               ❓ {openQuestions.length}
             </span>
           )}
-          {committed ? (
+          {committed && (
             <span
-              className="text-[0.6875rem] px-1.5 py-0.5 rounded-full border border-emerald-500/30 bg-emerald-500/15 text-emerald-300 font-mono"
+              className="hidden sm:inline text-[0.6875rem] px-1.5 py-0.5 rounded-full border border-emerald-500/30 bg-emerald-500/15 text-emerald-300 font-mono"
               title={`commiteado ${task.committed_at ? timeAgo(task.committed_at, now) : ""}`}
             >
               ✓ {task.commit_hash!.slice(0, 7)}
             </span>
-          ) : commitPending ? (
-            <span
-              className="inline-flex items-center gap-1 text-[0.6875rem] px-2 py-0.5 rounded-full border border-amber-500/40 bg-amber-500/15 text-amber-300"
-              title="Pedido de commit. El loop lo hará en su próxima iteración."
-            >
-              ⏳ commit
-              <button
-                onClick={cancelCommit}
-                className="text-amber-200/70 hover:text-amber-100"
-                title="Cancelar"
-              >
-                ✕
-              </button>
-            </span>
-          ) : (
-            <button
-              onClick={requestCommit}
-              className="text-[0.6875rem] px-2 py-0.5 rounded-full border border-zinc-700 text-zinc-400 hover:text-emerald-300 hover:border-emerald-500/40 transition-colors"
-              title="Pedir que el loop commitee esta task"
-            >
-              commit
-            </button>
           )}
-          <button
-            onClick={() => patch({ tested: !task.tested })}
-            className={`inline-flex items-center gap-1 text-[0.6875rem] px-2 py-0.5 rounded-full border transition-colors ${
-              task.tested
-                ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
-                : "border-zinc-700 text-zinc-400 hover:border-emerald-500/40 hover:text-emerald-300"
-            }`}
-            title="Marcar que probaste la feature"
-          >
-            {task.tested ? "✓ tested" : "tested"}
-          </button>
-          {task.stage !== "production" && (
-            <button
-              onClick={() => patch({ stage: "production", status: "done" })}
-              className="text-[0.6875rem] px-2 py-0.5 rounded-full border border-zinc-700 text-zinc-400 hover:text-emerald-300 hover:border-emerald-500/40 transition-colors"
-              title="Archivar: la da por hecha y la manda a 'En producción' (colapsado abajo)"
+          {task.tested && (
+            <span
+              className="hidden sm:inline text-[0.6875rem] px-1.5 py-0.5 rounded-full border border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
+              title="Probaste esta feature"
             >
-              📦 archivar
-            </button>
+              ✓ tested
+            </span>
           )}
         </div>
       </div>
@@ -1405,6 +1389,57 @@ function TaskRow({
                 </option>
               ))}
             </select>
+
+            {committed ? (
+              <span
+                className="text-[0.6875rem] px-2 py-1 rounded-full border border-emerald-500/30 bg-emerald-500/15 text-emerald-300 font-mono"
+                title={`commiteado ${task.committed_at ? timeAgo(task.committed_at, now) : ""}`}
+              >
+                ✓ {task.commit_hash!.slice(0, 7)}
+              </span>
+            ) : commitPending ? (
+              <span
+                className="inline-flex items-center gap-1 text-[0.6875rem] px-2 py-1 rounded-full border border-amber-500/40 bg-amber-500/15 text-amber-300"
+                title="Pedido de commit. El loop lo hará en su próxima iteración."
+              >
+                ⏳ commit
+                <button
+                  onClick={cancelCommit}
+                  className="text-amber-200/70 hover:text-amber-100"
+                  title="Cancelar"
+                >
+                  ✕
+                </button>
+              </span>
+            ) : (
+              <button
+                onClick={requestCommit}
+                className="text-[0.6875rem] px-2 py-1 rounded-full border border-zinc-700 text-zinc-400 hover:text-emerald-300 hover:border-emerald-500/40 transition-colors"
+                title="Pedir que el loop commitee esta task"
+              >
+                commit
+              </button>
+            )}
+            <button
+              onClick={() => patch({ tested: !task.tested })}
+              className={`inline-flex items-center gap-1 text-[0.6875rem] px-2 py-1 rounded-full border transition-colors ${
+                task.tested
+                  ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
+                  : "border-zinc-700 text-zinc-400 hover:border-emerald-500/40 hover:text-emerald-300"
+              }`}
+              title="Marcar que probaste la feature"
+            >
+              {task.tested ? "✓ tested" : "tested"}
+            </button>
+            {task.stage !== "production" && (
+              <button
+                onClick={() => patch({ stage: "production", status: "done" })}
+                className="text-[0.6875rem] px-2 py-1 rounded-full border border-zinc-700 text-zinc-400 hover:text-emerald-300 hover:border-emerald-500/40 transition-colors"
+                title="Archivar: la da por hecha y la manda a 'En producción' (colapsado abajo)"
+              >
+                📦 archivar
+              </button>
+            )}
 
             <div className="ml-auto flex items-center gap-1">
               <button
