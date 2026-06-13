@@ -320,11 +320,27 @@ export function createQuestion(taskId: number, text: string) {
 }
 
 export function answerQuestion(id: number, answer: string) {
-  db()
+  const d = db();
+  d.prepare(
+    "UPDATE question SET answer = ?, answered = 1, answered_at = datetime('now') WHERE id = ?"
+  ).run(answer, id);
+  // Si la task estaba bloqueada por esta pregunta y ya no le quedan preguntas
+  // abiertas, devolvela a `todo`: el worker solo procesa todo/in_progress, así
+  // que una task que sigue `blocked` nunca sería retomada al responderla.
+  const q = d.prepare("SELECT task_id FROM question WHERE id = ?").get(id) as
+    | { task_id: number }
+    | undefined;
+  if (!q) return;
+  const open = d
     .prepare(
-      "UPDATE question SET answer = ?, answered = 1, answered_at = datetime('now') WHERE id = ?"
+      "SELECT COUNT(*) c FROM question WHERE task_id = ? AND answered = 0"
     )
-    .run(answer, id);
+    .get(q.task_id) as { c: number };
+  if (open.c === 0) {
+    d.prepare(
+      "UPDATE task SET status = 'todo', updated_at = datetime('now') WHERE id = ? AND status = 'blocked'"
+    ).run(q.task_id);
+  }
 }
 
 export function taskExists(id: number): boolean {

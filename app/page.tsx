@@ -451,21 +451,26 @@ function Sidebar({
     await reload();
   }
 
-  const isActive = (p: ProjectView) =>
-    p.worker_running ||
-    (!!p.last_seen && now - parseUTC(p.last_seen) < PROJECT_ACTIVE_MS);
-  // Projects waiting for an answer bubble to the top of their group.
-  const waitingFirst = (a: ProjectView, b: ProjectView) =>
-    (openQuestionCount(b) > 0 ? 1 : 0) - (openQuestionCount(a) > 0 ? 1 : 0);
-  const on = projects.filter(isActive).sort(waitingFirst);
-  const off = projects.filter((p) => !isActive(p)).sort(waitingFirst);
-
   // El loop dejó novedades sin ver: produjo actividad después de la última vez
   // que abriste el proyecto. Se omite si hay preguntas abiertas (esas ya gritan
   // en rojo con su propio indicador).
   const isUnseen = (p: ProjectView) =>
     openQuestionCount(p) === 0 &&
     loopActivityAt(p) > (seen[p.id] ?? Number.MAX_SAFE_INTEGER);
+
+  // "Prendido": worker corriendo, visto hace poco, con preguntas abiertas, o
+  // con una respuesta/novedad del loop que todavía no miraste. Cualquier cosa
+  // que requiera tu atención mantiene el proyecto arriba, no en "apagados".
+  const isActive = (p: ProjectView) =>
+    p.worker_running ||
+    openQuestionCount(p) > 0 ||
+    isUnseen(p) ||
+    (!!p.last_seen && now - parseUTC(p.last_seen) < PROJECT_ACTIVE_MS);
+  // Projects waiting for an answer bubble to the top of their group.
+  const waitingFirst = (a: ProjectView, b: ProjectView) =>
+    (openQuestionCount(b) > 0 ? 1 : 0) - (openQuestionCount(a) > 0 ? 1 : 0);
+  const on = projects.filter(isActive).sort(waitingFirst);
+  const off = projects.filter((p) => !isActive(p)).sort(waitingFirst);
 
   // Ctrl/⌘ + ↑/↓ cicla entre proyectos siguiendo el orden visual del sidebar
   // (primero los prendidos, después los apagados). El ref se mantiene fresco vía
