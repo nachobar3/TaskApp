@@ -11,6 +11,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { getProject, pidAlive, setWorkerPid } from "./db";
+import { resolveWorkerModel } from "./models";
 
 // Same window the UI uses for the "prendido" indicator.
 const INTERACTIVE_FRESH_MS = 8 * 60 * 1000;
@@ -74,9 +75,8 @@ export function maybeStartWorker(
   const bin = process.env.TASKAPP_CLAUDE_BIN || "claude";
   // Pin the model explicitly. Without --model the worker inherits the user's
   // default, which can resolve to a model this non-interactive run can't access
-  // (e.g. a preview model) and die instantly. `sonnet` is a stable alias;
-  // override with TASKAPP_WORKER_MODEL (e.g. "opus").
-  const model = process.env.TASKAPP_WORKER_MODEL || "sonnet";
+  // and die instantly. Per-project setting, else env, else the latest alias.
+  const model = resolveWorkerModel(p.worker_model);
   const logFile = path.join(logsDir(), `${p.id}-${p.name.replace(/[^\w.-]+/g, "_")}.log`);
   const fd = fs.openSync(logFile, "a");
   fs.writeSync(
@@ -87,7 +87,18 @@ export function maybeStartWorker(
   try {
     const child = spawn(
       bin,
-      ["--dangerously-skip-permissions", "--model", model, "-p", WORKER_PROMPT],
+      [
+        "--dangerously-skip-permissions",
+        "--model",
+        model,
+        // stream-json emits one JSON event per line in real time (tool calls,
+        // text, results) so the UI can show live activity by tailing the log.
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "-p",
+        WORKER_PROMPT,
+      ],
       {
         cwd: p.path,
         detached: true,

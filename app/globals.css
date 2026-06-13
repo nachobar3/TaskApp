@@ -15,6 +15,10 @@
 
 html {
   color-scheme: dark;
+  /* Subimos el root 1pt (16→17px) para que toda la UI (rem) se acerque al
+     tamaño del resumen de Claude. El texto markdown (.md) está en px absolutos,
+     así que no se mueve — queda como referencia. */
+  font-size: 17px;
 }
 
 body {

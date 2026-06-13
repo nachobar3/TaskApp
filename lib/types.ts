@@ -73,6 +73,7 @@ export interface ProjectView {
   auto_worker: boolean;
   worker_running: boolean;
   worker_started_at: string | null;
+  worker_model: string | null;
   created_at: string;
   documents: DocumentView[];
 }

@@ -20,6 +20,7 @@ export interface Project {
   auto_worker: number;
   worker_pid: number | null;
   worker_started_at: string | null;
+  worker_model: string | null;
   created_at: string;
 }
 export interface Document {
@@ -385,6 +386,12 @@ export function setAutoWorker(projectId: number, enabled: boolean) {
   db()
     .prepare("UPDATE project SET auto_worker = ? WHERE id = ?")
     .run(enabled ? 1 : 0, projectId);
+}
+
+export function setWorkerModel(projectId: number, model: string) {
+  db()
+    .prepare("UPDATE project SET worker_model = ? WHERE id = ?")
+    .run(model, projectId);
 }
 
 export function setWorkerPid(projectId: number, pid: number | null) {

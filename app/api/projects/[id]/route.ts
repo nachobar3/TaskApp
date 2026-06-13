@@ -4,7 +4,9 @@ import {
   setAutoWorker,
   setPushStage,
   setTargetBranch,
+  setWorkerModel,
 } from "@/lib/db";
+import { isValidWorkerModel } from "@/lib/models";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,6 +25,9 @@ export async function PATCH(
   }
   if (typeof body?.auto_worker === "boolean") {
     setAutoWorker(Number(id), body.auto_worker);
+  }
+  if (isValidWorkerModel(body?.worker_model)) {
+    setWorkerModel(Number(id), body.worker_model);
   }
   return NextResponse.json({ ok: true });
 }

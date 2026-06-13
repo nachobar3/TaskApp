@@ -10,6 +10,7 @@ import {
   TaskView,
   openQuestionCount,
 } from "@/lib/types";
+import { DEFAULT_WORKER_MODEL, WORKER_MODELS } from "@/lib/models";
 
 const STAGES: Stage[] = ["local", "develop", "production"];
 const STAGE_STYLE: Record<Stage, string> = {
@@ -606,6 +607,7 @@ function ProjectPanel({
   const [addingDoc, setAddingDoc] = useState(false);
   const [docName, setDocName] = useState("");
   const [branch, setBranch] = useState(project.target_branch);
+  const [showActivity, setShowActivity] = useState(false);
   const now = Date.now();
 
   const tasksToCommit = project.documents
@@ -669,6 +671,11 @@ function ProjectPanel({
     await reload();
   }
 
+  async function saveWorkerModel(model: string) {
+    await api(`/api/projects/${project.id}`, "PATCH", { worker_model: model });
+    await reload();
+  }
+
   return (
     <div className="max-w-4xl mx-auto p-3 sm:p-6">
       <div className="flex items-center justify-between mb-1">
@@ -728,7 +735,40 @@ function ProjectPanel({
             ▶ Correr ahora
           </button>
         )}
+
+        {/* Modelo de Claude Code para los workers de este proyecto */}
+        <label className="inline-flex items-center gap-1.5 text-zinc-500">
+          modelo
+          <select
+            value={project.worker_model ?? DEFAULT_WORKER_MODEL}
+            onChange={(e) => saveWorkerModel(e.target.value)}
+            className="px-2 py-1 rounded-md bg-zinc-800/70 border border-zinc-700 text-zinc-200 outline-none cursor-pointer focus:border-indigo-500"
+            title="Modelo que usan los workers (claude -p) de este proyecto"
+          >
+            {WORKER_MODELS.map((m, i) => (
+              <option key={m.alias} value={m.alias}>
+                {m.label}
+                {i === 0 ? " (último)" : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        {/* Ver actividad en vivo del worker (oculto por default) */}
+        <button
+          onClick={() => setShowActivity((v) => !v)}
+          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border transition-colors ${
+            showActivity
+              ? "border-zinc-600 bg-zinc-800 text-zinc-200"
+              : "border-zinc-700 text-zinc-500 hover:text-zinc-300"
+          }`}
+          title="Mostrar/ocultar el print en vivo de lo que hace el worker"
+        >
+          {showActivity ? "▾" : "▸"} actividad
+        </button>
       </div>
+
+      {showActivity && <WorkerActivity projectId={project.id} />}
 
       {/* Git / push bar */}
       <div className="flex flex-wrap items-center gap-3 mb-5 text-xs">
@@ -1264,13 +1304,33 @@ function TaskRow({
               ❓ {openQuestions.length}
             </span>
           )}
-          {committed && (
+          {/* Acciones en el header — solo desktop; en mobile viven en el
+              detalle expandido para no tapar el título. */}
+          {committed ? (
             <span
               className="hidden sm:inline text-[0.6875rem] px-1.5 py-0.5 rounded-full border border-emerald-500/30 bg-emerald-500/15 text-emerald-300 font-mono"
               title={`commiteado ${task.committed_at ? timeAgo(task.committed_at, now) : ""}`}
             >
               ✓ {task.commit_hash!.slice(0, 7)}
             </span>
+          ) : commitPending ? (
+            <span
+              className="hidden sm:inline-flex items-center gap-1 text-[0.6875rem] px-2 py-0.5 rounded-full border border-amber-500/40 bg-amber-500/15 text-amber-300"
+              title="Pedido de commit. El loop lo hará en su próxima iteración."
+            >
+              ⏳ commit
+              <button onClick={cancelCommit} className="text-amber-200/70 hover:text-amber-100" title="Cancelar">
+                ✕
+              </button>
+            </span>
+          ) : (
+            <button
+              onClick={requestCommit}
+              className="hidden sm:inline text-[0.6875rem] px-2 py-0.5 rounded-full border border-zinc-700 text-zinc-400 hover:text-emerald-300 hover:border-emerald-500/40 transition-colors"
+              title="Pedir que el loop commitee esta task"
+            >
+              commit
+            </button>
           )}
           {task.tested && (
             <span
@@ -1279,6 +1339,15 @@ function TaskRow({
             >
               ✓ tested
             </span>
+          )}
+          {task.stage !== "production" && (
+            <button
+              onClick={() => patch({ stage: "production", status: "done" })}
+              className="hidden sm:inline text-[0.6875rem] px-2 py-0.5 rounded-full border border-zinc-700 text-zinc-400 hover:text-emerald-300 hover:border-emerald-500/40 transition-colors"
+              title="Archivar: la da por hecha y la manda a 'En producción' (colapsado abajo)"
+            >
+              📦 archivar
+            </button>
           )}
         </div>
       </div>
@@ -1405,16 +1474,18 @@ function TaskRow({
               ))}
             </select>
 
+            {/* commit / tested / archivar: solo mobile — en desktop están en
+                el header de la fila (colapsada y expandida). */}
             {committed ? (
               <span
-                className="text-[0.6875rem] px-2 py-1 rounded-full border border-emerald-500/30 bg-emerald-500/15 text-emerald-300 font-mono"
+                className="sm:hidden text-[0.6875rem] px-2 py-1 rounded-full border border-emerald-500/30 bg-emerald-500/15 text-emerald-300 font-mono"
                 title={`commiteado ${task.committed_at ? timeAgo(task.committed_at, now) : ""}`}
               >
                 ✓ {task.commit_hash!.slice(0, 7)}
               </span>
             ) : commitPending ? (
               <span
-                className="inline-flex items-center gap-1 text-[0.6875rem] px-2 py-1 rounded-full border border-amber-500/40 bg-amber-500/15 text-amber-300"
+                className="sm:hidden inline-flex items-center gap-1 text-[0.6875rem] px-2 py-1 rounded-full border border-amber-500/40 bg-amber-500/15 text-amber-300"
                 title="Pedido de commit. El loop lo hará en su próxima iteración."
               >
                 ⏳ commit
@@ -1429,7 +1500,7 @@ function TaskRow({
             ) : (
               <button
                 onClick={requestCommit}
-                className="text-[0.6875rem] px-2 py-1 rounded-full border border-zinc-700 text-zinc-400 hover:text-emerald-300 hover:border-emerald-500/40 transition-colors"
+                className="sm:hidden text-[0.6875rem] px-2 py-1 rounded-full border border-zinc-700 text-zinc-400 hover:text-emerald-300 hover:border-emerald-500/40 transition-colors"
                 title="Pedir que el loop commitee esta task"
               >
                 commit
@@ -1437,7 +1508,7 @@ function TaskRow({
             )}
             <button
               onClick={() => patch({ tested: !task.tested })}
-              className={`inline-flex items-center gap-1 text-[0.6875rem] px-2 py-1 rounded-full border transition-colors ${
+              className={`sm:hidden inline-flex items-center gap-1 text-[0.6875rem] px-2 py-1 rounded-full border transition-colors ${
                 task.tested
                   ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
                   : "border-zinc-700 text-zinc-400 hover:border-emerald-500/40 hover:text-emerald-300"
@@ -1449,7 +1520,7 @@ function TaskRow({
             {task.stage !== "production" && (
               <button
                 onClick={() => patch({ stage: "production", status: "done" })}
-                className="text-[0.6875rem] px-2 py-1 rounded-full border border-zinc-700 text-zinc-400 hover:text-emerald-300 hover:border-emerald-500/40 transition-colors"
+                className="sm:hidden text-[0.6875rem] px-2 py-1 rounded-full border border-zinc-700 text-zinc-400 hover:text-emerald-300 hover:border-emerald-500/40 transition-colors"
                 title="Archivar: la da por hecha y la manda a 'En producción' (colapsado abajo)"
               >
                 📦 archivar
@@ -1707,6 +1778,80 @@ function FollowupInput({
       >
         {busy ? "…" : "Pedir"}
       </button>
+    </div>
+  );
+}
+
+interface LogEvent {
+  kind: "text" | "tool" | "result" | "run" | "sep";
+  text: string;
+}
+
+function WorkerActivity({ projectId }: { projectId: number }) {
+  const [events, setEvents] = useState<LogEvent[]>([]);
+  const [empty, setEmpty] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  const fetchLog = useCallback(async () => {
+    try {
+      const data = await api(`/api/projects/${projectId}/worker-log`, "GET");
+      setEvents(data.events ?? []);
+      setEmpty(!!data.empty || (data.events ?? []).length === 0);
+    } catch {
+      /* el server puede no estar — el poll reintenta */
+    } finally {
+      setLoaded(true);
+    }
+  }, [projectId]);
+
+  // Poll cada 10s mientras el panel está montado (se monta solo si está abierto).
+  useEffect(() => {
+    fetchLog();
+    const t = setInterval(fetchLog, 10000);
+    return () => clearInterval(t);
+  }, [fetchLog]);
+
+  // Autoscroll al fondo cuando llegan eventos nuevos.
+  useEffect(() => {
+    if (boxRef.current) boxRef.current.scrollTop = boxRef.current.scrollHeight;
+  }, [events]);
+
+  const style: Record<LogEvent["kind"], string> = {
+    text: "text-zinc-300",
+    tool: "text-sky-300/90",
+    result: "text-emerald-300",
+    run: "text-amber-300",
+    sep: "text-zinc-600 border-t border-zinc-800 mt-1 pt-1",
+  };
+
+  return (
+    <div className="mb-5 rounded-lg border border-zinc-800 bg-zinc-950/60">
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-zinc-800/80 text-[0.6875rem] text-zinc-500">
+        <span>actividad del worker · se refresca cada 10s</span>
+        <button onClick={fetchLog} className="hover:text-zinc-300" title="Refrescar ahora">
+          ↻
+        </button>
+      </div>
+      <div
+        ref={boxRef}
+        className="max-h-64 overflow-y-auto px-3 py-2 font-mono text-[0.6875rem] leading-relaxed space-y-0.5"
+      >
+        {!loaded ? (
+          <p className="text-zinc-600">cargando…</p>
+        ) : empty ? (
+          <p className="text-zinc-600">
+            Sin actividad registrada todavía. Aparece cuando un worker corre
+            (lanzá uno con ▶ Correr ahora).
+          </p>
+        ) : (
+          events.map((e, i) => (
+            <div key={i} className={`whitespace-pre-wrap break-words ${style[e.kind]}`}>
+              {e.text}
+            </div>
+          ))
+        )}
+      </div>
     </div>
   );
 }

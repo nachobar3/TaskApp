@@ -102,9 +102,17 @@ that resumes the thread.
 > projects where you're comfortable with that, and don't combine it with an
 > interactive loop on the same project. Worker logs land in
 > `~/.taskapp/logs/<project>.log`. Use `$TASKAPP_CLAUDE_BIN` to point to a
-> specific `claude` binary, and `$TASKAPP_WORKER_MODEL` to pick the model
-> (default `sonnet`; e.g. `opus`). The model is pinned explicitly so the worker
-> never inherits a default it can't access in headless mode.
+> specific `claude` binary.
+
+**Model picker** — each project has a model selector (Opus / Sonnet / Haiku);
+default is the latest alias (`opus`). The model is pinned explicitly on spawn
+so the worker never inherits a default it can't access in headless mode.
+Override the global default with `$TASKAPP_WORKER_MODEL`.
+
+**Live activity** — toggle "actividad" on a project to see the worker's print
+in real time (tool calls, file edits, commands, results), refreshed every 10s.
+Workers run with `--output-format stream-json`, so the log is a live event
+stream the UI tails and renders human-readably. Hidden by default.
 
 ## Remote access & phone PWA (Tailscale)
 
@@ -150,7 +158,7 @@ The dev config already allows `*.ts.net` origins (`allowedDevOrigins` in
 | Attachments | `~/.taskapp/attachments/` |
 | Worker logs | `~/.taskapp/logs/` |
 | Claude binary for workers | `$TASKAPP_CLAUDE_BIN` (default: `claude`) |
-| Worker model | `$TASKAPP_WORKER_MODEL` (default: `sonnet`) |
+| Worker model | per-project picker; global default `$TASKAPP_WORKER_MODEL` (else `opus`) |
 | Port | 7777 (`npm run dev` and `npm start`) |
 | PWA icons | regenerate with `node scripts/gen-icons.mjs` |
 
