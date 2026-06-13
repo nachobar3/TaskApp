@@ -170,8 +170,19 @@ Corré `taskapp help` para ver todos los comandos.
    - **Solución**: qué cambiaste para arreglarlo
    ```
 
-   El `stage` (local / develop / production) lo manejás vos según dónde esté el
-   código. El check **tested** lo tilda el humano en la UI, no vos.
+   El `stage` (local / develop / production) refleja **dónde está corriendo el
+   código que produjiste**, no si la tarea está terminada:
+   - `local` (default): el cambio está solo en tu working tree, **o la tarea no
+     genera/despliega código** (análisis, consulta, verificación, "decile hola",
+     revisar algo, responder una duda). ⚠️ **Una tarea informativa SIEMPRE queda
+     en `local`** — NUNCA le pongas develop ni production.
+   - `develop` / `production`: SOLO si confirmaste que el código quedó corriendo
+     en ese entorno (lo pusheaste/deployaste vos, o el humano pidió el push y se
+     hizo). Si no hubo deploy, no subas el stage.
+
+   En la duda, dejá `local`. El stage NO sirve para "archivar" ni ocultar la
+   tarea — eso lo hace el humano con el botón Archivar en la UI. El check
+   **tested** lo tilda el humano, no vos.
 
 5. Si descubrís trabajo nuevo que conviene registrar, podés crear tareas:
    ```bash

@@ -960,12 +960,13 @@ function DocPanel({
     }
   }
 
-  // Visible: everything still living in local/develop. Collapsed: production
-  // (incluye lo archivado, que también queda como production).
-  const inProd = doc.tasks.filter((t) => t.stage === "production");
+  // Lo que se oculta es lo ARCHIVADO (acción explícita del humano), no el
+  // stage: una task puede estar en producción y seguir visible. El stage es
+  // solo un metadato de dónde vive el código.
+  const archived = doc.tasks.filter((t) => t.archived);
   const visible = doc.tasks
-    .filter((t) => t.stage !== "production")
-    // pending tasks first, completed-but-not-prod below
+    .filter((t) => !t.archived)
+    // pending tasks first, done below
     .sort((a, b) => Number(a.status === "done") - Number(b.status === "done"));
 
   return (
@@ -1074,13 +1075,13 @@ function DocPanel({
         />
       ))}
 
-      {inProd.length > 0 && (
+      {archived.length > 0 && (
         <details className="pt-1">
-          <summary className="cursor-pointer text-emerald-500/70 hover:text-emerald-400 text-xs uppercase tracking-wide select-none">
-            En producción ({inProd.length})
+          <summary className="cursor-pointer text-zinc-500 hover:text-zinc-300 text-xs uppercase tracking-wide select-none">
+            Archivadas ({archived.length})
           </summary>
           <div className="space-y-3 mt-3">
-            {inProd.map((t) => (
+            {archived.map((t) => (
               <TaskRow
                 key={t.id}
                 task={t}
@@ -1340,11 +1341,19 @@ function TaskRow({
               ✓ tested
             </span>
           )}
-          {task.stage !== "production" && (
+          {task.archived ? (
             <button
-              onClick={() => patch({ stage: "production", status: "done" })}
+              onClick={() => patch({ archived: false })}
+              className="hidden sm:inline text-[0.6875rem] px-2 py-0.5 rounded-full border border-zinc-700 text-zinc-400 hover:text-indigo-300 hover:border-indigo-500/40 transition-colors"
+              title="Desarchivar: la devuelve a la vista principal"
+            >
+              ↩ desarchivar
+            </button>
+          ) : (
+            <button
+              onClick={() => patch({ archived: true, status: "done" })}
               className="hidden sm:inline text-[0.6875rem] px-2 py-0.5 rounded-full border border-zinc-700 text-zinc-400 hover:text-emerald-300 hover:border-emerald-500/40 transition-colors"
-              title="Archivar: la da por hecha y la manda a 'En producción' (colapsado abajo)"
+              title="Archivar: la da por hecha y la oculta en 'Archivadas' (no cambia el stage)"
             >
               📦 archivar
             </button>
@@ -1517,11 +1526,19 @@ function TaskRow({
             >
               {task.tested ? "✓ tested" : "tested"}
             </button>
-            {task.stage !== "production" && (
+            {task.archived ? (
               <button
-                onClick={() => patch({ stage: "production", status: "done" })}
+                onClick={() => patch({ archived: false })}
+                className="sm:hidden text-[0.6875rem] px-2 py-1 rounded-full border border-zinc-700 text-zinc-400 hover:text-indigo-300 hover:border-indigo-500/40 transition-colors"
+                title="Desarchivar: la devuelve a la vista principal"
+              >
+                ↩ desarchivar
+              </button>
+            ) : (
+              <button
+                onClick={() => patch({ archived: true, status: "done" })}
                 className="sm:hidden text-[0.6875rem] px-2 py-1 rounded-full border border-zinc-700 text-zinc-400 hover:text-emerald-300 hover:border-emerald-500/40 transition-colors"
-                title="Archivar: la da por hecha y la manda a 'En producción' (colapsado abajo)"
+                title="Archivar: la da por hecha y la oculta en 'Archivadas' (no cambia el stage)"
               >
                 📦 archivar
               </button>
