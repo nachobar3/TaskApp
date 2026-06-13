@@ -41,6 +41,7 @@ export interface TaskView {
   created_at: string;
   updated_at: string;
   last_heartbeat: string | null;
+  heartbeat_note: string | null;
   summary: string | null;
   commit_requested: boolean;
   commit_hash: string | null;

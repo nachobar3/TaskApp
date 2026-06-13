@@ -21,9 +21,12 @@ const WORKER_PROMPT = `Sos un worker autónomo de TaskApp para este proyecto. In
 2. Procesá la cola: tareas en status todo/in_progress (\`taskapp tasks --status todo,in_progress --json\`). Una tarea con follow-ups abiertos es una CONTINUACIÓN: su hilo (body original, resumen previo, preguntas respondidas y los follow-ups) es tu contexto — leelo entero con \`taskapp show <id> --json\` antes de trabajar.
 3. Atendé también \`taskapp git-pending\` según el protocolo.
 4. Si necesitás una decisión del humano, hacé \`taskapp ask <id> ... --block\` y TERMINÁ tu ejecución inmediatamente: cuando el humano responda en la UI, otro worker va a arrancar y retomar. No esperes la respuesta vos.
-5. Comandos largos (suites de tests, builds, seeds): corrélos en FOREGROUND y esperá el resultado en esta misma ejecución, prefijando un heartbeat (\`taskapp heartbeat <id>; <comando>\`). NUNCA dejes un proceso en background y termines "para esperar el resultado": el proceso muere con vos y nadie te relanza cuando termina. Si algo tarda 20 minutos, esperalo los 20 minutos.
+5. ⛔ CRÍTICO — corrés en \`claude -p\` (headless, NO interactivo): NO existe NINGÚN mecanismo de notificación. Si lanzás un proceso en background NUNCA vas a recibir aviso de que terminó, porque tu ejecución se cierra y nadie te re-invoca. Por lo tanto:
+   - Comandos largos (suites de tests, builds, seeds): SIEMPRE en FOREGROUND, bloqueante, esperando el resultado en esta misma ejecución. Prefijá un heartbeat con nota (\`taskapp heartbeat <id> --note "corriendo suite e2e (~30 min)"; <comando>\` — la nota queda visible en la UI). Si tarda 30 minutos, lo esperás 30 minutos.
+   - PROHIBIDO terminar "para esperar el resultado de algo en background", "cuando termine me llega la notificación", o similar. Eso NO pasa: el resultado se pierde y la task queda colgada.
+   - NUNCA ates el cierre de una task a los tests. Si el cambio de código está hecho, separá: marcá la task done con un resumen honesto ("código aplicado; suite NO corrida / corrida con N fallas") en vez de dejarla in_progress esperando una corrida que nadie va a ver. Si REALMENTE necesitás el resultado de la suite antes de cerrar, correla en foreground ahora.
 6. Antes de terminar, volvé a chequear la cola (\`taskapp tasks --status todo,in_progress --json\` y \`taskapp git-pending\`): si entró trabajo nuevo mientras trabajabas, procesalo también.
-7. Cuando no quede nada pendiente (o quedaste bloqueado en una pregunta), terminá. Nunca dejes una task in_progress sin un proceso tuyo trabajándola: o la terminás, o la bloqueás con un ask, o la devolvés a todo explicando en qué quedó.`;
+7. Cuando no quede nada pendiente (o quedaste bloqueado en una pregunta), terminá. ⛔ NUNCA dejes una task in_progress al terminar tu ejecución: o la terminás (done + resumen), o la bloqueás con un ask, o la devolvés a todo explicando en qué quedó. Una task in_progress sin proceso vivo es un bug — la UI la muestra colgada y nadie la retoma.`;
 
 function logsDir(): string {
   const dir = path.join(
@@ -69,6 +72,11 @@ export function maybeStartWorker(
   }
 
   const bin = process.env.TASKAPP_CLAUDE_BIN || "claude";
+  // Pin the model explicitly. Without --model the worker inherits the user's
+  // default, which can resolve to a model this non-interactive run can't access
+  // (e.g. a preview model) and die instantly. `sonnet` is a stable alias;
+  // override with TASKAPP_WORKER_MODEL (e.g. "opus").
+  const model = process.env.TASKAPP_WORKER_MODEL || "sonnet";
   const logFile = path.join(logsDir(), `${p.id}-${p.name.replace(/[^\w.-]+/g, "_")}.log`);
   const fd = fs.openSync(logFile, "a");
   fs.writeSync(
@@ -79,7 +87,7 @@ export function maybeStartWorker(
   try {
     const child = spawn(
       bin,
-      ["--dangerously-skip-permissions", "-p", WORKER_PROMPT],
+      ["--dangerously-skip-permissions", "--model", model, "-p", WORKER_PROMPT],
       {
         cwd: p.path,
         detached: true,

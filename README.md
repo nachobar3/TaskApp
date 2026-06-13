@@ -102,7 +102,9 @@ that resumes the thread.
 > projects where you're comfortable with that, and don't combine it with an
 > interactive loop on the same project. Worker logs land in
 > `~/.taskapp/logs/<project>.log`. Use `$TASKAPP_CLAUDE_BIN` to point to a
-> specific `claude` binary.
+> specific `claude` binary, and `$TASKAPP_WORKER_MODEL` to pick the model
+> (default `sonnet`; e.g. `opus`). The model is pinned explicitly so the worker
+> never inherits a default it can't access in headless mode.
 
 ## Remote access & phone PWA (Tailscale)
 
@@ -148,6 +150,7 @@ The dev config already allows `*.ts.net` origins (`allowedDevOrigins` in
 | Attachments | `~/.taskapp/attachments/` |
 | Worker logs | `~/.taskapp/logs/` |
 | Claude binary for workers | `$TASKAPP_CLAUDE_BIN` (default: `claude`) |
+| Worker model | `$TASKAPP_WORKER_MODEL` (default: `sonnet`) |
 | Port | 7777 (`npm run dev` and `npm start`) |
 | PWA icons | regenerate with `node scripts/gen-icons.mjs` |
 

@@ -20,17 +20,29 @@ CLI `taskapp`, que escribe en una base SQLite compartida con la UI
   - Si hacés un `ask --block`, terminá tu ejecución inmediatamente — NO esperes
     la respuesta: cuando el humano responda en la UI, la app lanza otro worker
     que retoma.
-  - **Comandos largos (tests, builds, seeds): en foreground y los esperás** en
-    esta misma ejecución, con heartbeat prefijado:
-    `taskapp heartbeat <id>; pnpm test:e2e`. NUNCA dejes un proceso en
-    background y termines "para esperar el resultado": el proceso muere con tu
-    ejecución y nadie te relanza cuando termina.
+  - ⛔ Corrés en `claude -p` (headless, NO interactivo): **no hay ningún
+    mecanismo de notificación**. Si lanzás algo en background NUNCA te vas a
+    enterar de que terminó, porque tu ejecución se cierra y nadie te re-invoca.
+    Por eso:
+    - **Comandos largos (tests, builds, seeds): SIEMPRE en foreground**,
+      bloqueante, esperando el resultado en esta misma ejecución, con heartbeat
+      prefijado que diga QUÉ corrés y cuánto estimás (queda visible en la UI):
+      `taskapp heartbeat <id> --note "corriendo suite e2e (~30 min)"; pnpm test:e2e`.
+      Si tarda 30 minutos, lo esperás 30 minutos.
+    - PROHIBIDO terminar "para esperar el resultado", "cuando termine me llega
+      la notificación" o similar. No pasa: el resultado se pierde y la task
+      queda colgada.
+    - NUNCA ates el cierre de una task a los tests. Si el código está hecho,
+      cerrá la task (done + resumen honesto que diga si la suite corrió y con
+      qué resultado) en vez de dejarla `in_progress` esperando una corrida que
+      nadie va a ver.
   - Antes de terminar, volvé a chequear `taskapp tasks --status todo,in_progress`
     y `taskapp git-pending`: si entró trabajo nuevo mientras trabajabas,
     procesalo también. Terminás solo cuando no queda nada (o estás bloqueado).
-  - Nunca termines dejando una task `in_progress` sin nadie trabajándola: o la
-    terminás, o la bloqueás con un `ask`, o la devolvés a `todo` explicando en
-    qué quedó.
+  - ⛔ NUNCA termines dejando una task `in_progress`: o la terminás (done +
+    resumen), o la bloqueás con un `ask`, o la devolvés a `todo` explicando en
+    qué quedó. Una task `in_progress` sin proceso vivo queda colgada en la UI y
+    nadie la retoma.
 
 ## Asociación automática por directorio
 
@@ -92,6 +104,9 @@ Corré `taskapp help` para ver todos los comandos.
    ```bash
    taskapp heartbeat <taskId>
    ```
+   Antes de un comando largo, agregá `--note "corriendo suite e2e (~30 min)"`:
+   la nota queda visible en la UI mientras no haya señales nuevas (un heartbeat
+   sin `--note` la limpia).
 
 3. **Trabajá la tarea.** Si necesitás una decisión del humano, **BLOQUEATE y esperá**:
    - Hacé la pregunta (queda visible con badge en la UI). **Escribila en markdown
@@ -230,6 +245,7 @@ hash del commit que las incluyó.
 | Ver una tarea | `taskapp show <id> --json` |
 | Tomar tarea | `taskapp update-task <id> --status in_progress` |
 | Sigo activo (heartbeat) | `taskapp heartbeat <id>` |
+| Voy a correr algo largo | `taskapp heartbeat <id> --note "corriendo e2e (~30 min)"; <comando>` |
 | Preguntar | `taskapp ask <id> "..." --block` |
 | Ver respuestas | `taskapp questions --task <id> --answered --json` |
 | Terminar (con resumen) | `taskapp done <id> --stage develop --summary-file <ruta>` |

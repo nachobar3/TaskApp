@@ -362,6 +362,8 @@ const commands = {
       fail("nothing to update (use --status/--stage/--title/--body/--summary)");
     // Claiming a task counts as activity.
     if (flags.status === "in_progress") sets.push("last_heartbeat = datetime('now')");
+    // Cambiar de status invalida la nota "qué estoy haciendo ahora".
+    if (flags.status && flags.status !== true) sets.push("heartbeat_note = NULL");
     db.prepare(`UPDATE task SET ${sets.join(", ")}, updated_at = datetime('now') WHERE id = ?`).run(
       ...vals,
       id
@@ -371,13 +373,16 @@ const commands = {
 
   // Signal that you're actively working on a task right now. Call it
   // periodically during long work so the UI shows the task as "trabajando".
+  // --note "corriendo suite e2e (~30 min)" deja visible en la UI qué estás
+  // haciendo mientras no hay más señales; un heartbeat sin --note la limpia.
   heartbeat(db, { pos, flags }) {
     const id = Number(pos[0]);
     if (!id) fail("heartbeat requires a task id");
     if (!db.prepare("SELECT 1 FROM task WHERE id = ?").get(id)) fail(`task not found: ${id}`);
+    const note = flags.note && flags.note !== true ? String(flags.note) : null;
     db.prepare(
-      "UPDATE task SET last_heartbeat = datetime('now'), status = CASE WHEN status = 'done' THEN status ELSE 'in_progress' END WHERE id = ?"
-    ).run(id);
+      "UPDATE task SET last_heartbeat = datetime('now'), heartbeat_note = ?, status = CASE WHEN status = 'done' THEN status ELSE 'in_progress' END WHERE id = ?"
+    ).run(note, id);
     out(flags, { ok: true, id }, () => console.log(`heartbeat task #${id}`));
   },
 
@@ -387,7 +392,7 @@ const commands = {
     const id = Number(pos[0]);
     if (!id) fail("done requires a task id");
     if (!db.prepare("SELECT 1 FROM task WHERE id = ?").get(id)) fail(`task not found: ${id}`);
-    const sets = ["status = 'done'"];
+    const sets = ["status = 'done'", "heartbeat_note = NULL"];
     const vals = [];
     if (flags.stage && flags.stage !== true) {
       const s = String(flags.stage);
@@ -587,7 +592,10 @@ Lectura (lo que el loop hace cada iteración):
 
 Escritura (lo que el loop reporta):
   taskapp update-task <taskId> [--status todo|in_progress|blocked|done] [--stage local|develop|production]
-  taskapp heartbeat <taskId>           → "sigo trabajando en esta task" (llamalo cada tanto)
+  taskapp heartbeat <taskId> [--note "corriendo suite e2e (~30 min)"]
+       → "sigo trabajando en esta task" (llamalo cada tanto). La --note queda
+         visible en la UI mientras dura un comando largo; un heartbeat sin
+         --note la limpia.
   taskapp done <taskId> [--stage develop] --summary-file <ruta>
        → marca la task hecha + deja un resumen de lo que se hizo (OBLIGATORIO).
          Resumen: --summary "..."  |  --summary-file <ruta>  |  --summary-stdin

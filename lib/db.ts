@@ -40,6 +40,7 @@ export interface Task {
   created_at: string;
   updated_at: string;
   last_heartbeat: string | null;
+  heartbeat_note: string | null;
   summary: string | null;
   commit_requested: number;
   commit_hash: string | null;
@@ -251,6 +252,8 @@ export function updateTask(
   const setParts = keys.map((k) => `${k} = @${k}`);
   // Claiming a task (status -> in_progress) counts as a heartbeat.
   if (patch.status === "in_progress") setParts.push("last_heartbeat = datetime('now')");
+  // Cambiar de status invalida la nota "qué estoy haciendo ahora" del worker.
+  if (patch.status) setParts.push("heartbeat_note = NULL");
   const values: Record<string, unknown> = { id };
   for (const k of keys) {
     values[k] =

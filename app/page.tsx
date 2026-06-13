@@ -711,6 +711,8 @@ function ProjectPanel({
               <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
             </span>
             worker corriendo
+            {project.worker_started_at &&
+              ` · arrancó ${timeAgo(project.worker_started_at, now)}`}
           </span>
         ) : (
           <button
@@ -1206,22 +1208,35 @@ function TaskRow({
           )}
           {working ? (
             <span
-              className="inline-flex items-center gap-1.5 text-[0.6875rem] px-2 py-0.5 rounded-full border border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
+              className="inline-flex items-center gap-1.5 text-[0.6875rem] px-2 py-0.5 rounded-full border border-emerald-500/40 bg-emerald-500/15 text-emerald-300 max-w-full sm:max-w-xs"
               title={`última señal ${timeAgo(task.last_heartbeat!, now)}`}
             >
-              <span className="relative flex h-2 w-2">
+              <span className="relative flex h-2 w-2 shrink-0">
                 <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75 animate-ping" />
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
               </span>
-              trabajando
+              <span className="truncate">
+                trabajando
+                {task.heartbeat_note && ` · ${task.heartbeat_note}`}
+              </span>
             </span>
           ) : workerBusy ? (
             <span
-              className="inline-flex items-center gap-1.5 text-[0.6875rem] px-2 py-0.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 text-emerald-300/90"
-              title="El worker está corriendo pero sin señal reciente — típico de un comando largo (tests, build)."
+              className="inline-flex items-center gap-1.5 text-[0.6875rem] px-2 py-0.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 text-emerald-300/90 max-w-full sm:max-w-xs"
+              title={
+                "El worker está corriendo pero sin señal reciente — típico de un comando largo (tests, build)." +
+                (task.last_heartbeat
+                  ? ` Última señal ${timeAgo(task.last_heartbeat, now)}.`
+                  : "")
+              }
             >
-              <span className="h-2 w-2 rounded-full bg-emerald-400/70" />
-              worker activo
+              <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-400/70" />
+              <span className="truncate">
+                worker activo
+                {task.heartbeat_note && ` · ${task.heartbeat_note}`}
+                {task.last_heartbeat &&
+                  ` · señal ${timeAgo(task.last_heartbeat, now)}`}
+              </span>
             </span>
           ) : stalled ? (
             <span
