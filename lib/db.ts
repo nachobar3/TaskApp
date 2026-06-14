@@ -24,6 +24,13 @@ export interface Project {
   worker_model: string | null;
   created_at: string;
 }
+export interface ProjectBranch {
+  id: number;
+  project_id: number;
+  branch: string;
+  stage: string;
+  created_at: string;
+}
 export interface Document {
   id: number;
   project_id: number;
@@ -114,6 +121,9 @@ export function pidAlive(pid: number | null): boolean {
 export function getState() {
   const d = db();
   const projects = d.prepare("SELECT * FROM project ORDER BY id").all() as Project[];
+  const branches = d
+    .prepare("SELECT * FROM project_branch ORDER BY id")
+    .all() as ProjectBranch[];
   const documents = d.prepare("SELECT * FROM document ORDER BY id").all() as Document[];
   const tasks = d
     .prepare("SELECT * FROM task ORDER BY id DESC")
@@ -133,6 +143,9 @@ export function getState() {
     push_requested: !!p.push_requested,
     auto_worker: !!p.auto_worker,
     worker_running: pidAlive(p.worker_pid),
+    branches: branches
+      .filter((b) => b.project_id === p.id)
+      .map((b) => ({ id: b.id, branch: b.branch, stage: b.stage })),
     documents: documents
       .filter((doc) => doc.project_id === p.id)
       .map((doc) => ({
@@ -160,13 +173,21 @@ export function getState() {
 
 export function createProject(name: string, projectPath?: string) {
   const d = db();
+  // New projects start pointing at main → production (the single default push
+  // destination). The human can add more branch → stage pairs from the UI.
   const info = d
-    .prepare("INSERT INTO project (name, path) VALUES (?, ?)")
+    .prepare(
+      "INSERT INTO project (name, path, target_branch, push_stage) VALUES (?, ?, 'main', 'production')"
+    )
     .run(name, projectPath ?? null);
   // Every project starts with a default To-Do document.
   d.prepare("INSERT INTO document (project_id, name) VALUES (?, 'To-Do')").run(
     info.lastInsertRowid
   );
+  // Seed the push-destination catalog with main → production.
+  d.prepare(
+    "INSERT INTO project_branch (project_id, branch, stage) VALUES (?, 'main', 'production')"
+  ).run(info.lastInsertRowid);
   return info.lastInsertRowid as number;
 }
 
@@ -287,22 +308,94 @@ export function setCommitRequested(taskId: number, requested: boolean) {
     .run(requested ? 1 : 0, taskId);
 }
 
+/**
+ * Mark every done, not-yet-committed, not-archived task of a project as
+ * pending commit. Returns how many tasks were newly flagged.
+ */
+export function requestCommitAllDone(projectId: number): number {
+  const info = db()
+    .prepare(
+      `UPDATE task SET commit_requested = 1, updated_at = datetime('now')
+         WHERE commit_requested = 0
+           AND status = 'done'
+           AND commit_hash IS NULL
+           AND archived = 0
+           AND document_id IN (SELECT id FROM document WHERE project_id = ?)`
+    )
+    .run(projectId);
+  return info.changes;
+}
+
 export function setPushRequested(projectId: number, requested: boolean) {
   db()
     .prepare("UPDATE project SET push_requested = ? WHERE id = ?")
     .run(requested ? 1 : 0, projectId);
 }
 
-export function setTargetBranch(projectId: number, branch: string) {
+/** Select the active push destination (branch + stage) the loop will push to. */
+export function setPushDestination(
+  projectId: number,
+  branch: string,
+  stage: string
+) {
   db()
-    .prepare("UPDATE project SET target_branch = ? WHERE id = ?")
-    .run(branch, projectId);
+    .prepare("UPDATE project SET target_branch = ?, push_stage = ? WHERE id = ?")
+    .run(branch, stage, projectId);
 }
 
-export function setPushStage(projectId: number, stage: string) {
+// --- push destinations catalog (branch -> stage pairs per project) ---------
+
+export function listProjectBranches(projectId: number): ProjectBranch[] {
+  return db()
+    .prepare("SELECT * FROM project_branch WHERE project_id = ? ORDER BY id")
+    .all(projectId) as ProjectBranch[];
+}
+
+/** Add a branch → stage destination. Idempotent on (project, branch). */
+export function addProjectBranch(
+  projectId: number,
+  branch: string,
+  stage: string
+) {
   db()
-    .prepare("UPDATE project SET push_stage = ? WHERE id = ?")
-    .run(stage, projectId);
+    .prepare(
+      "INSERT INTO project_branch (project_id, branch, stage) VALUES (?, ?, ?) " +
+        "ON CONFLICT(project_id, branch) DO UPDATE SET stage = excluded.stage"
+    )
+    .run(projectId, branch, stage);
+}
+
+/** Remove a destination, but never leave a project with zero destinations. */
+export function deleteProjectBranch(projectId: number, branchId: number) {
+  const d = db();
+  const count = d
+    .prepare("SELECT COUNT(*) c FROM project_branch WHERE project_id = ?")
+    .get(projectId) as { c: number };
+  if (count.c <= 1) return false;
+  d.prepare(
+    "DELETE FROM project_branch WHERE id = ? AND project_id = ?"
+  ).run(branchId, projectId);
+  // If we just deleted the currently-selected destination, fall back to the
+  // first remaining one so target_branch/push_stage never dangle.
+  const proj = d
+    .prepare("SELECT target_branch FROM project WHERE id = ?")
+    .get(projectId) as { target_branch: string } | undefined;
+  const stillThere = d
+    .prepare("SELECT 1 FROM project_branch WHERE project_id = ? AND branch = ?")
+    .get(projectId, proj?.target_branch);
+  if (!stillThere) {
+    const first = d
+      .prepare(
+        "SELECT branch, stage FROM project_branch WHERE project_id = ? ORDER BY id LIMIT 1"
+      )
+      .get(projectId) as { branch: string; stage: string } | undefined;
+    if (first) {
+      d.prepare(
+        "UPDATE project SET target_branch = ?, push_stage = ? WHERE id = ?"
+      ).run(first.branch, first.stage, projectId);
+    }
+  }
+  return true;
 }
 
 export function deleteTask(id: number) {

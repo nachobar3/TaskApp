@@ -52,6 +52,12 @@ export interface TaskView {
   followups: FollowupView[];
 }
 
+export interface ProjectBranchView {
+  id: number;
+  branch: string;
+  stage: string;
+}
+
 export interface DocumentView {
   id: number;
   project_id: number;
@@ -76,6 +82,7 @@ export interface ProjectView {
   worker_started_at: string | null;
   worker_model: string | null;
   created_at: string;
+  branches: ProjectBranchView[];
   documents: DocumentView[];
 }
 

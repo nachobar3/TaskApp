@@ -187,11 +187,17 @@ const commands = {
     let p = db.prepare("SELECT * FROM project WHERE name = ?").get(name);
     if (!p) {
       const info = db
-        .prepare("INSERT INTO project (name, path) VALUES (?, ?)")
+        .prepare(
+          "INSERT INTO project (name, path, target_branch, push_stage) VALUES (?, ?, 'main', 'production')"
+        )
         .run(name, flags.path && flags.path !== true ? flags.path : null);
       db.prepare("INSERT INTO document (project_id, name) VALUES (?, 'To-Do')").run(
         info.lastInsertRowid
       );
+      // Seed the push-destination catalog with main → production.
+      db.prepare(
+        "INSERT INTO project_branch (project_id, branch, stage) VALUES (?, 'main', 'production')"
+      ).run(info.lastInsertRowid);
       p = db.prepare("SELECT * FROM project WHERE id = ?").get(info.lastInsertRowid);
     } else if (flags.path && flags.path !== true && !p.path) {
       db.prepare("UPDATE project SET path = ? WHERE id = ?").run(flags.path, p.id);

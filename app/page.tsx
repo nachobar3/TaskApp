@@ -571,7 +571,7 @@ function Sidebar({
             <input
               value={path}
               onChange={(e) => setPath(e.target.value)}
-              placeholder="Path (opcional)"
+              placeholder="Ruta (opcional)"
               className={INPUT}
             />
             <div className="flex gap-2">
@@ -619,13 +619,26 @@ function ProjectPanel({
 }) {
   const [addingDoc, setAddingDoc] = useState(false);
   const [docName, setDocName] = useState("");
-  const [branch, setBranch] = useState(project.target_branch);
+  const [editingDest, setEditingDest] = useState(false);
+  const [newBranch, setNewBranch] = useState("");
+  const [newStage, setNewStage] = useState<"develop" | "production">("production");
   const [showActivity, setShowActivity] = useState(false);
   const now = Date.now();
 
   const tasksToCommit = project.documents
     .flatMap((d) => d.tasks)
     .filter((t) => t.commit_requested).length;
+
+  // Done tasks not yet committed (nor archived) — candidates for "commit all".
+  const tasksCommittable = project.documents
+    .flatMap((d) => d.tasks)
+    .filter(
+      (t) =>
+        t.status === "done" &&
+        !t.commit_hash &&
+        !t.archived &&
+        !t.commit_requested
+    ).length;
 
   async function createDoc() {
     if (!docName.trim()) return;
@@ -641,14 +654,35 @@ function ProjectPanel({
     await reload();
   }
 
-  async function saveBranch() {
-    if (!branch.trim() || branch.trim() === project.target_branch) return;
-    await api(`/api/projects/${project.id}`, "PATCH", { target_branch: branch.trim() });
+  // Pick one of the configured branch → stage destinations as the active one.
+  async function selectDest(branch: string, stage: string) {
+    if (branch === project.target_branch && stage === project.push_stage) return;
+    await api(`/api/projects/${project.id}`, "PATCH", {
+      target_branch: branch,
+      push_stage: stage,
+    });
     await reload();
   }
 
-  async function savePushStage(stage: string) {
-    await api(`/api/projects/${project.id}`, "PATCH", { push_stage: stage });
+  async function addDest() {
+    const b = newBranch.trim();
+    if (!b) return;
+    await api(`/api/projects/${project.id}/branches`, "POST", {
+      branch: b,
+      stage: newStage,
+    });
+    setNewBranch("");
+    await reload();
+  }
+
+  async function removeDest(branchId: number) {
+    try {
+      await api(`/api/projects/${project.id}/branches`, "DELETE", {
+        branch_id: branchId,
+      });
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "No se pudo borrar el destino");
+    }
     await reload();
   }
 
@@ -660,6 +694,18 @@ function ProjectPanel({
     )
       return;
     await api(`/api/projects/${project.id}/push-request`, "POST", {});
+    await reload();
+  }
+
+  async function commitAll() {
+    if (tasksCommittable === 0) return;
+    if (
+      !confirm(
+        `Marcar para commit las ${tasksCommittable} task(s) hechas, no commiteadas y no archivadas.\n\nUn worker las va a commitear en local (sin pushear). ¿Seguir?`
+      )
+    )
+      return;
+    await api(`/api/projects/${project.id}/commit-all`, "POST", {});
     await reload();
   }
 
@@ -802,28 +848,32 @@ function ProjectPanel({
       {showActivity && <WorkerActivity projectId={project.id} />}
 
       {/* Git / push bar */}
-      <div className="flex flex-wrap items-center gap-3 mb-5 text-xs">
+      <div className="flex flex-col gap-2 mb-5 text-xs">
+       <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-1.5">
-          <span className="text-zinc-500">rama destino</span>
-          <input
-            value={branch}
-            onChange={(e) => setBranch(e.target.value)}
-            onBlur={saveBranch}
-            onKeyDown={(e) => e.key === "Enter" && saveBranch()}
-            className="w-28 px-2 py-1 rounded-md bg-zinc-800/70 border border-zinc-700 text-zinc-100 font-mono outline-none focus:border-indigo-500"
-          />
-        </div>
-        <div className="flex items-center gap-1.5">
-          <span className="text-zinc-500">→ stage</span>
+          <span className="text-zinc-500">destino</span>
           <select
-            value={project.push_stage}
-            onChange={(e) => savePushStage(e.target.value)}
-            className={`px-2 py-1 rounded-md border outline-none cursor-pointer ${STAGE_STYLE[project.push_stage as Stage] ?? STAGE_STYLE.develop}`}
-            title="A qué stage pasan las tasks cuando se pushea a esta rama"
+            value={`${project.target_branch} ${project.push_stage}`}
+            onChange={(e) => {
+              const [b, s] = e.target.value.split(" ");
+              selectDest(b, s);
+            }}
+            className={`px-2 py-1 rounded-md border outline-none cursor-pointer font-mono ${STAGE_STYLE[project.push_stage as Stage] ?? STAGE_STYLE.develop}`}
+            title="Rama a la que el loop pushea, y el stage al que pasan las tasks"
           >
-            <option value="develop">develop</option>
-            <option value="production">production</option>
+            {project.branches.map((b) => (
+              <option key={b.id} value={`${b.branch} ${b.stage}`}>
+                {b.branch} → {b.stage}
+              </option>
+            ))}
           </select>
+          <button
+            onClick={() => setEditingDest((v) => !v)}
+            className="text-zinc-500 hover:text-zinc-300"
+            title="Editar destinos del proyecto"
+          >
+            {editingDest ? "▾" : "✎"}
+          </button>
         </div>
         {project.push_requested ? (
           <span className="inline-flex items-center gap-2 px-2.5 py-1 rounded-md border border-amber-500/40 bg-amber-500/15 text-amber-300">
@@ -845,6 +895,15 @@ function ProjectPanel({
             {tasksToCommit > 0 ? ` · ${tasksToCommit} a commitear` : ""}
           </button>
         )}
+        <button
+          onClick={commitAll}
+          disabled={tasksCommittable === 0}
+          className="px-3 py-1 rounded-md bg-sky-600 hover:bg-sky-500 disabled:opacity-40 disabled:cursor-default text-white font-medium transition-colors"
+          title="Commitea en local todas las tasks hechas, no commiteadas y no archivadas (sin pushear)"
+        >
+          ⎇ Commit all
+          {tasksCommittable > 0 ? ` · ${tasksCommittable}` : ""}
+        </button>
         {project.last_push_at && (
           <span
             className={
@@ -856,6 +915,59 @@ function ProjectPanel({
             último push: {project.push_status} · {timeAgo(project.last_push_at, now)}
           </span>
         )}
+       </div>
+
+       {/* Editor de destinos (rama → stage) del proyecto */}
+       {editingDest && (
+        <div className="flex flex-col gap-2 p-3 rounded-md border border-zinc-800 bg-zinc-900/40">
+          <div className="flex flex-col gap-1">
+            {project.branches.map((b) => (
+              <div key={b.id} className="flex items-center gap-2">
+                <span className="font-mono text-zinc-300">{b.branch}</span>
+                <span className="text-zinc-600">→</span>
+                <span
+                  className={`px-1.5 py-0.5 rounded border ${STAGE_STYLE[b.stage as Stage] ?? STAGE_STYLE.develop}`}
+                >
+                  {b.stage}
+                </span>
+                {project.branches.length > 1 && (
+                  <button
+                    onClick={() => removeDest(b.id)}
+                    className="text-zinc-600 hover:text-rose-400"
+                    title="Borrar destino"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+          <div className="flex items-center gap-2 pt-1 border-t border-zinc-800">
+            <input
+              value={newBranch}
+              onChange={(e) => setNewBranch(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && addDest()}
+              placeholder="rama"
+              className="w-28 px-2 py-1 rounded-md bg-zinc-800/70 border border-zinc-700 text-zinc-100 font-mono outline-none focus:border-indigo-500"
+            />
+            <span className="text-zinc-600">→</span>
+            <select
+              value={newStage}
+              onChange={(e) => setNewStage(e.target.value as "develop" | "production")}
+              className={`px-2 py-1 rounded-md border outline-none cursor-pointer ${STAGE_STYLE[newStage]}`}
+            >
+              <option value="develop">develop</option>
+              <option value="production">production</option>
+            </select>
+            <button
+              onClick={addDest}
+              className="px-2 py-1 rounded-md bg-zinc-700 hover:bg-zinc-600 text-zinc-100"
+            >
+              + agregar
+            </button>
+          </div>
+        </div>
+       )}
       </div>
 
       {/* Document tabs */}
@@ -1090,7 +1202,7 @@ function DocPanel({
             disabled={busy}
             className="px-3.5 py-1.5 rounded-md bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-medium transition-colors"
           >
-            {busy ? "Creando…" : "Crear task"}
+            {busy ? "Creando…" : "Crear tarea"}
           </button>
         </div>
       </div>
@@ -1391,7 +1503,7 @@ function TaskRow({
               className="hidden sm:inline text-[0.6875rem] px-1.5 py-0.5 rounded-full border border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
               title="Probaste esta feature"
             >
-              ✓ tested
+              ✓ probada
             </span>
           )}
           {task.archived ? (
@@ -1511,7 +1623,7 @@ function TaskRow({
                 onChange={(e) => patch({ tested: e.target.checked })}
                 className="h-4 w-4 accent-emerald-500"
               />
-              tested
+              probada
             </label>
 
             {/* commit / archivar: solo mobile — en desktop están en
@@ -1654,11 +1766,18 @@ function StatusBadge({ status }: { status: string }) {
     blocked: "bg-rose-500/15 text-rose-300 border-rose-500/30",
     done: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
   };
+  // Etiqueta en español para mostrar (el valor crudo del status no cambia).
+  const label: Record<string, string> = {
+    todo: "pendiente",
+    in_progress: "en progreso",
+    blocked: "bloqueada",
+    done: "HECHA",
+  };
   return (
     <span
       className={`text-[0.625rem] px-1.5 py-0.5 rounded border ${map[status] ?? map.todo}`}
     >
-      {status === "done" ? "DONE" : status.replace("_", " ")}
+      {label[status] ?? status.replace("_", " ")}
     </span>
   );
 }

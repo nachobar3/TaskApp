@@ -3,8 +3,7 @@ import {
   deleteProject,
   setAutoWorker,
   setPoweredOff,
-  setPushStage,
-  setTargetBranch,
+  setPushDestination,
   setWorkerModel,
 } from "@/lib/db";
 import { isValidWorkerModel } from "@/lib/models";
@@ -18,11 +17,14 @@ export async function PATCH(
 ) {
   const { id } = await params;
   const body = await req.json().catch(() => ({}));
-  if (typeof body?.target_branch === "string" && body.target_branch.trim()) {
-    setTargetBranch(Number(id), body.target_branch.trim());
-  }
-  if (body?.push_stage === "develop" || body?.push_stage === "production") {
-    setPushStage(Number(id), body.push_stage);
+  // Select the active push destination: branch + stage move together (the user
+  // picks one of the configured branch → stage pairs).
+  if (
+    typeof body?.target_branch === "string" &&
+    body.target_branch.trim() &&
+    (body?.push_stage === "develop" || body?.push_stage === "production")
+  ) {
+    setPushDestination(Number(id), body.target_branch.trim(), body.push_stage);
   }
   if (typeof body?.auto_worker === "boolean") {
     setAutoWorker(Number(id), body.auto_worker);
