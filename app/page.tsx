@@ -602,6 +602,122 @@ function Sidebar({
   );
 }
 
+// Diálogo modal acorde al diseño de la app, en reemplazo de los nativos del
+// browser (confirm/alert). Promise-based: `confirm()` resuelve a boolean,
+// `alert()` a void. Esc/backdrop cancelan, Enter confirma.
+type DialogVariant = "default" | "danger";
+type DialogRequest = {
+  title?: string;
+  message: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  variant?: DialogVariant;
+};
+type DialogState = DialogRequest & {
+  kind: "confirm" | "alert";
+  resolve: (ok: boolean) => void;
+};
+
+function DialogModal({
+  state,
+  onClose,
+}: {
+  state: DialogState;
+  onClose: (ok: boolean) => void;
+}) {
+  const confirmRef = useRef<HTMLButtonElement>(null);
+  const danger = state.variant === "danger";
+  const showCancel = state.kind === "confirm";
+
+  useEffect(() => {
+    confirmRef.current?.focus();
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose(false);
+      else if (e.key === "Enter") onClose(true);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+      onClick={() => onClose(false)}
+      role="dialog"
+      aria-modal="true"
+    >
+      <div
+        className="w-full max-w-md rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl shadow-black/40"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="p-5">
+          {state.title && (
+            <h3 className="text-base font-semibold text-zinc-100 mb-2">
+              {state.title}
+            </h3>
+          )}
+          <p className="text-sm text-zinc-300 whitespace-pre-line leading-relaxed">
+            {state.message}
+          </p>
+        </div>
+        <div className="flex justify-end gap-2 px-5 py-3 border-t border-zinc-800">
+          {showCancel && (
+            <button
+              onClick={() => onClose(false)}
+              className="px-3 py-1.5 rounded-md text-sm text-zinc-300 border border-zinc-700 hover:bg-zinc-800 transition-colors"
+            >
+              {state.cancelLabel ?? "Cancelar"}
+            </button>
+          )}
+          <button
+            ref={confirmRef}
+            onClick={() => onClose(true)}
+            className={`px-3 py-1.5 rounded-md text-sm font-medium text-white transition-colors ${
+              danger
+                ? "bg-rose-600 hover:bg-rose-500"
+                : "bg-indigo-600 hover:bg-indigo-500"
+            }`}
+          >
+            {state.confirmLabel ?? (showCancel ? "Confirmar" : "Entendido")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Hook: devuelve `confirm`/`alert` (promise-based) y el elemento `dialog` para
+// montar en el árbol. Maneja un único diálogo a la vez.
+function useDialog() {
+  const [state, setState] = useState<DialogState | null>(null);
+
+  const confirm = useCallback(
+    (req: DialogRequest) =>
+      new Promise<boolean>((resolve) =>
+        setState({ ...req, kind: "confirm", resolve })
+      ),
+    []
+  );
+  const alert = useCallback(
+    (req: DialogRequest) =>
+      new Promise<void>((resolve) =>
+        setState({ ...req, kind: "alert", resolve: () => resolve() })
+      ),
+    []
+  );
+  const close = useCallback(
+    (ok: boolean) =>
+      setState((s) => {
+        s?.resolve(ok);
+        return null;
+      }),
+    []
+  );
+
+  const dialog = state ? <DialogModal state={state} onClose={close} /> : null;
+  return { confirm, alert, dialog };
+}
+
 function ProjectPanel({
   project,
   doc,
@@ -623,6 +739,7 @@ function ProjectPanel({
   const [newBranch, setNewBranch] = useState("");
   const [newStage, setNewStage] = useState<"develop" | "production">("production");
   const [showActivity, setShowActivity] = useState(false);
+  const { confirm, alert, dialog } = useDialog();
   const now = Date.now();
 
   const tasksToCommit = project.documents
@@ -649,7 +766,13 @@ function ProjectPanel({
   }
 
   async function removeProject() {
-    if (!confirm(`¿Borrar el proyecto "${project.name}" y todo su contenido?`)) return;
+    const ok = await confirm({
+      title: "Borrar proyecto",
+      message: `Se va a borrar "${project.name}" y todo su contenido. Esta acción no se puede deshacer.`,
+      confirmLabel: "Borrar",
+      variant: "danger",
+    });
+    if (!ok) return;
     await api(`/api/projects/${project.id}`, "DELETE");
     await reload();
   }
@@ -681,30 +804,34 @@ function ProjectPanel({
         branch_id: branchId,
       });
     } catch (e) {
-      alert(e instanceof Error ? e.message : "No se pudo borrar el destino");
+      await alert({
+        title: "No se pudo borrar el destino",
+        message: e instanceof Error ? e.message : "Error desconocido",
+        variant: "danger",
+      });
     }
     await reload();
   }
 
   async function requestPush() {
-    if (
-      !confirm(
-        `Pedir push a la rama "${project.target_branch}" (las tasks pasan a stage "${project.push_stage}").\n\nEl loop, en su próxima iteración, va a commitear las tasks marcadas (${tasksToCommit}) y pushear. ¿Seguir?`
-      )
-    )
-      return;
+    const ok = await confirm({
+      title: "Pedir push",
+      message: `Pedir push a la rama "${project.target_branch}" (las tasks pasan a stage "${project.push_stage}").\n\nEl loop, en su próxima iteración, va a commitear las tasks marcadas (${tasksToCommit}) y pushear.`,
+      confirmLabel: "Pushear",
+    });
+    if (!ok) return;
     await api(`/api/projects/${project.id}/push-request`, "POST", {});
     await reload();
   }
 
   async function commitAll() {
     if (tasksCommittable === 0) return;
-    if (
-      !confirm(
-        `Marcar para commit las ${tasksCommittable} task(s) hechas, no commiteadas y no archivadas.\n\nUn worker las va a commitear en local (sin pushear). ¿Seguir?`
-      )
-    )
-      return;
+    const ok = await confirm({
+      title: "Commit all",
+      message: `Marcar para commit las ${tasksCommittable} task(s) hechas, no commiteadas y no archivadas.\n\nUn worker las va a commitear en local (sin pushear).`,
+      confirmLabel: "Commitear",
+    });
+    if (!ok) return;
     await api(`/api/projects/${project.id}/commit-all`, "POST", {});
     await reload();
   }
@@ -732,7 +859,11 @@ function ProjectPanel({
     try {
       await api(`/api/projects/${project.id}/worker`, "POST", {});
     } catch (e) {
-      alert(e instanceof Error ? e.message : "No se pudo lanzar el worker");
+      await alert({
+        title: "No se pudo lanzar el worker",
+        message: e instanceof Error ? e.message : "Error desconocido",
+        variant: "danger",
+      });
     }
     await reload();
   }
@@ -1042,6 +1173,7 @@ function ProjectPanel({
       ) : (
         <p>Sin documentos.</p>
       )}
+      {dialog}
     </div>
   );
 }
