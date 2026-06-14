@@ -9,6 +9,8 @@ up, work inside each project's repo, report progress, ask you questions when
 they need a decision, and keep a per-task thread you can follow up on. The
 whole thing runs on **your machine**: your repos, your Claude Code, your data.
 
+![TaskApp board](docs/screenshot.png)
+
 ```
 You (web UI / phone PWA)          Claude Code agents
         │                                 │
