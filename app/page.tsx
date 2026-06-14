@@ -1155,11 +1155,16 @@ function TaskRow({
   // proyecto; el resto, colapsadas.
   const [expanded, setExpanded] = useState(unseen);
   useEffect(() => {
-    // Al mostrarlas ya expandidas las damos por vistas; si no, se volverían a
-    // auto-expandir en cada visita. Solo corre al montar.
+    // Mientras la task esté a la vista en el proyecto abierto, dala por vista.
+    // No alcanza con marcarla al montar: si el loop la vuelve a tocar (commit,
+    // cambio de stage, archivado…) su `updated_at` se mueve y volvería a contar
+    // como "novedad sin ver" aunque la tengas enfrente. Re-marcar cada vez que
+    // `unseen` se reactiva la mantiene vista —mismo criterio que el proyecto
+    // abierto, que se marca visto en cada poll. (`expanded` se fija solo al
+    // montar, así que el churn no la re-expande: solo apaga el ✦.)
     if (unseen) onSeen();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [unseen]);
   // Abrir manualmente una task también la marca como vista (apaga el ✦).
   function toggle() {
     if (!expanded) onSeen();
@@ -1285,9 +1290,7 @@ function TaskRow({
         )}
         <span
           onClick={toggle}
-          className={`flex-1 min-w-0 font-medium truncate cursor-pointer ${
-            isDone ? "line-through text-zinc-600" : "text-zinc-100"
-          }`}
+          className="flex-1 min-w-0 font-medium truncate cursor-pointer text-zinc-100"
         >
           {task.title}
         </span>
@@ -1655,7 +1658,7 @@ function StatusBadge({ status }: { status: string }) {
     <span
       className={`text-[0.625rem] px-1.5 py-0.5 rounded border ${map[status] ?? map.todo}`}
     >
-      {status.replace("_", " ")}
+      {status === "done" ? "DONE" : status.replace("_", " ")}
     </span>
   );
 }
