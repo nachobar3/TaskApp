@@ -70,6 +70,7 @@ export interface ProjectView {
   push_status: string | null;
   last_seen: string | null;
   push_stage: string;
+  powered_off_at: string | null;
   auto_worker: boolean;
   worker_running: boolean;
   worker_started_at: string | null;

@@ -17,6 +17,7 @@ export interface Project {
   push_status: string | null;
   last_seen: string | null;
   push_stage: string;
+  powered_off_at: string | null;
   auto_worker: number;
   worker_pid: number | null;
   worker_started_at: string | null;
@@ -402,6 +403,19 @@ export function setAutoWorker(projectId: number, enabled: boolean) {
   db()
     .prepare("UPDATE project SET auto_worker = ? WHERE id = ?")
     .run(enabled ? 1 : 0, projectId);
+}
+
+/**
+ * Apagado/encendido manual de un proyecto. `off=true` lo marca apagado ahora;
+ * `off=false` limpia la marca. El proyecto vuelve a prenderse solo si el loop
+ * registra actividad posterior (last_seen) o se lo enciende a mano.
+ */
+export function setPoweredOff(projectId: number, off: boolean) {
+  db()
+    .prepare(
+      "UPDATE project SET powered_off_at = CASE WHEN ? THEN datetime('now') ELSE NULL END WHERE id = ?"
+    )
+    .run(off ? 1 : 0, projectId);
 }
 
 export function setWorkerModel(projectId: number, model: string) {

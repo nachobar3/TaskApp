@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   deleteProject,
   setAutoWorker,
+  setPoweredOff,
   setPushStage,
   setTargetBranch,
   setWorkerModel,
@@ -25,6 +26,9 @@ export async function PATCH(
   }
   if (typeof body?.auto_worker === "boolean") {
     setAutoWorker(Number(id), body.auto_worker);
+  }
+  if (typeof body?.powered_off === "boolean") {
+    setPoweredOff(Number(id), body.powered_off);
   }
   if (isValidWorkerModel(body?.worker_model)) {
     setWorkerModel(Number(id), body.worker_model);

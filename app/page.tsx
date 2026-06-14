@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -12,7 +12,6 @@ import {
 } from "@/lib/types";
 import { DEFAULT_WORKER_MODEL, WORKER_MODELS } from "@/lib/models";
 
-const STAGES: Stage[] = ["local", "develop", "production"];
 const STAGE_STYLE: Record<Stage, string> = {
   local: "bg-zinc-800 text-zinc-300 border-zinc-700",
   develop: "bg-amber-500/15 text-amber-300 border-amber-500/40",
@@ -26,9 +25,16 @@ const INPUT =
 // pinged it within this window.
 const WORKING_FRESH_MS = 5 * 60 * 1000;
 
-// A project is "prendido" (loop running) if its CLI was seen within this window.
-// The idle loop polls every ~5 min, so 8 min avoids flicker while idle.
-const PROJECT_ACTIVE_MS = 8 * 60 * 1000;
+// Un proyecto que el loop tocó alguna vez (tiene `last_seen`) se mantiene
+// "prendido" indefinidamente —para recordar en qué estabas trabajando aunque
+// quede idle— hasta que lo apagues a mano desde la UI (powered_off_at). Apagarlo
+// no es permanente: si el loop vuelve a registrar actividad (last_seen más
+// reciente que el apagado) o lo encendés a mano, vuelve a prenderse.
+function projectPoweredOff(p: ProjectView): boolean {
+  if (!p.powered_off_at) return false;
+  if (!p.last_seen) return true;
+  return parseUTC(p.powered_off_at) >= parseUTC(p.last_seen);
+}
 
 // SQLite stores timestamps as "YYYY-MM-DD HH:MM:SS" in UTC (no tz marker).
 function parseUTC(ts: string): number {
@@ -458,14 +464,16 @@ function Sidebar({
     openQuestionCount(p) === 0 &&
     loopActivityAt(p) > (seen[p.id] ?? Number.MAX_SAFE_INTEGER);
 
-  // "Prendido": worker corriendo, visto hace poco, con preguntas abiertas, o
-  // con una respuesta/novedad del loop que todavía no miraste. Cualquier cosa
-  // que requiera tu atención mantiene el proyecto arriba, no en "apagados".
+  // "Prendido": worker corriendo, con preguntas abiertas, con una novedad del
+  // loop que no miraste, o que el loop tocó alguna vez y no lo apagaste a mano.
+  // Ya NO se apaga solo por inactividad: queda prendido hasta que lo apagues.
+  // Las señales de atención (worker/preguntas/novedades) lo mantienen arriba
+  // aunque esté apagado a mano —no tiene sentido ocultar algo que te reclama.
   const isActive = (p: ProjectView) =>
     p.worker_running ||
     openQuestionCount(p) > 0 ||
     isUnseen(p) ||
-    (!!p.last_seen && now - parseUTC(p.last_seen) < PROJECT_ACTIVE_MS);
+    (!!p.last_seen && !projectPoweredOff(p));
   // Projects waiting for an answer bubble to the top of their group.
   const waitingFirst = (a: ProjectView, b: ProjectView) =>
     (openQuestionCount(b) > 0 ? 1 : 0) - (openQuestionCount(a) > 0 ? 1 : 0);
@@ -667,6 +675,13 @@ function ProjectPanel({
     await reload();
   }
 
+  async function togglePowered() {
+    await api(`/api/projects/${project.id}`, "PATCH", {
+      powered_off: !projectPoweredOff(project),
+    });
+    await reload();
+  }
+
   async function runWorkerNow() {
     try {
       await api(`/api/projects/${project.id}/worker`, "POST", {});
@@ -708,6 +723,17 @@ function ProjectPanel({
           title="Con auto worker, la app lanza un worker (claude -p) cuando creás una tarea, respondés una pregunta o pedís algo más sobre una task. No lo prendas si corrés un loop interactivo en una terminal."
         >
           ⚡ auto worker {project.auto_worker ? "ON" : "off"}
+        </button>
+        <button
+          onClick={togglePowered}
+          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border transition-colors ${
+            projectPoweredOff(project)
+              ? "border-zinc-700 text-zinc-500 hover:text-zinc-300"
+              : "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
+          }`}
+          title="El proyecto se mantiene prendido (arriba en el sidebar) hasta que lo apagues a mano. Si el loop vuelve a tener actividad, se prende solo de nuevo."
+        >
+          {projectPoweredOff(project) ? "○ apagado" : "● prendido"}
         </button>
         {project.worker_running ? (
           <span
@@ -1122,6 +1148,9 @@ function TaskRow({
 }) {
   const isDone = task.status === "done";
   const openQuestions = task.questions.filter((q) => !q.answered);
+  // Cada pregunta vive dentro del turno en que Claude la hizo, para que colapse
+  // junto con ese turno (pedido original o follow-up) en vez de quedar suelta.
+  const questionsByTurn = bucketQuestions(task);
   // Las tasks con novedad del loop sin ver arrancan expandidas al abrir el
   // proyecto; el resto, colapsadas.
   const [expanded, setExpanded] = useState(unseen);
@@ -1225,10 +1254,26 @@ function TaskRow({
       <div className="flex flex-wrap items-center gap-2">
         <button
           onClick={toggle}
-          className="shrink-0 w-4 text-center text-zinc-500 hover:text-zinc-200 transition-colors"
+          className={`shrink-0 flex items-center justify-center h-6 w-6 rounded-md border transition-colors ${
+            expanded
+              ? "border-indigo-500/40 bg-indigo-500/15 text-indigo-300 hover:bg-indigo-500/25"
+              : "border-zinc-700 bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100 hover:border-zinc-600"
+          }`}
           title={expanded ? "Colapsar" : "Expandir"}
+          aria-expanded={expanded}
         >
-          {expanded ? "▾" : "▸"}
+          <svg
+            className={`h-3.5 w-3.5 transition-transform duration-200 ${expanded ? "rotate-90" : ""}`}
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M6 4l4 4-4 4" />
+          </svg>
         </button>
         {unseen && (
           <span
@@ -1411,31 +1456,13 @@ function TaskRow({
               </div>
             </div>
           ) : (
-            <>
-              {task.body && (
-                <p className="text-zinc-400 whitespace-pre-wrap leading-relaxed">
-                  {task.body}
-                </p>
-              )}
-              {task.summary ? (
-                <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/[0.06] p-2.5">
-                  <div className="text-[0.625rem] uppercase tracking-wide text-emerald-400/80 mb-1">
-                    📝 Resumen
-                  </div>
-                  <div className="md">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                      {task.summary}
-                    </ReactMarkdown>
-                  </div>
-                </div>
-              ) : (
-                isDone && (
-                  <p className="text-[0.6875rem] text-amber-400/70">
-                    ⚠ Tarea hecha sin resumen.
-                  </p>
-                )
-              )}
-            </>
+            <OriginalTurn
+              task={task}
+              isDone={isDone}
+              collapsible={task.followups.length > 0}
+              questions={questionsByTurn.original}
+              reload={reload}
+            />
           )}
 
           {task.attachments.length > 0 && (
@@ -1446,19 +1473,17 @@ function TaskRow({
             </div>
           )}
 
-          {task.questions.length > 0 && (
-            <div className="space-y-2">
-              {task.questions.map((q) => (
-                <QuestionBlock key={q.id} q={q} reload={reload} />
-              ))}
-            </div>
-          )}
-
-          {/* Hilo: pedidos posteriores del humano sobre esta misma task */}
+          {/* Hilo: pedidos posteriores del humano sobre esta misma task. Cada
+              follow-up arrastra sus propias preguntas adentro del turno. */}
           {task.followups.length > 0 && (
             <div className="space-y-2">
               {task.followups.map((f) => (
-                <FollowupBlock key={f.id} f={f} />
+                <FollowupBlock
+                  key={f.id}
+                  f={f}
+                  questions={questionsByTurn.byFollowup.get(f.id) ?? []}
+                  reload={reload}
+                />
               ))}
             </div>
           )}
@@ -1476,19 +1501,17 @@ function TaskRow({
               hecha
             </label>
 
-            <select
-              value={task.stage}
-              onChange={(e) => patch({ stage: e.target.value })}
-              className={`text-sm rounded-md border px-2.5 py-1.5 outline-none cursor-pointer ${STAGE_STYLE[task.stage]}`}
-            >
-              {STAGES.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
+            <label className="flex items-center gap-1.5 text-sm text-zinc-400 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={task.tested}
+                onChange={(e) => patch({ tested: e.target.checked })}
+                className="h-4 w-4 accent-emerald-500"
+              />
+              tested
+            </label>
 
-            {/* commit / tested / archivar: solo mobile — en desktop están en
+            {/* commit / archivar: solo mobile — en desktop están en
                 el header de la fila (colapsada y expandida). */}
             {committed ? (
               <span
@@ -1520,17 +1543,6 @@ function TaskRow({
                 commit
               </button>
             )}
-            <button
-              onClick={() => patch({ tested: !task.tested })}
-              className={`sm:hidden inline-flex items-center gap-1 text-[0.6875rem] px-2 py-1 rounded-full border transition-colors ${
-                task.tested
-                  ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
-                  : "border-zinc-700 text-zinc-400 hover:border-emerald-500/40 hover:text-emerald-300"
-              }`}
-              title="Marcar que probaste la feature"
-            >
-              {task.tested ? "✓ tested" : "tested"}
-            </button>
             {task.archived ? (
               <button
                 onClick={() => patch({ archived: false })}
@@ -1717,18 +1729,167 @@ function QuestionBlock({
   );
 }
 
-function FollowupBlock({ f }: { f: TaskView["followups"][number] }) {
+// Reparte las preguntas de la task entre sus turnos. Cada follow-up abre un
+// turno nuevo, así que una pregunta pertenece al follow-up más reciente creado
+// antes que ella; si es anterior a todos, va al turno original (el pedido
+// inicial). Sin FK que las relacione, nos guiamos por las fechas de creación.
+function bucketQuestions(task: TaskView): {
+  original: TaskView["questions"];
+  byFollowup: Map<number, TaskView["questions"]>;
+} {
+  const original: TaskView["questions"] = [];
+  const byFollowup = new Map<number, TaskView["questions"]>();
+  const fups = [...task.followups].sort(
+    (a, b) => parseUTC(b.created_at) - parseUTC(a.created_at)
+  );
+  for (const q of task.questions) {
+    const qt = parseUTC(q.created_at);
+    const owner = fups.find((f) => parseUTC(f.created_at) <= qt);
+    if (owner) {
+      const arr = byFollowup.get(owner.id) ?? [];
+      arr.push(q);
+      byFollowup.set(owner.id, arr);
+    } else {
+      original.push(q);
+    }
+  }
+  return { original, byFollowup };
+}
+
+// Un "turno" de la conversación: cabecera clicable que colapsa/expande su
+// contenido. Colapsado, muestra solo el label + un preview en una línea, así un
+// hilo largo de varios turnos se puede achicar sin colapsar la task entera.
+function CollapsibleTurn({
+  label,
+  preview,
+  containerClass = "",
+  defaultCollapsed = false,
+  children,
+}: {
+  label: ReactNode;
+  preview: string;
+  containerClass?: string;
+  defaultCollapsed?: boolean;
+  children: ReactNode;
+}) {
+  const [collapsed, setCollapsed] = useState(defaultCollapsed);
   return (
-    <div
-      className={`rounded-lg border p-3 ${
+    <div className={containerClass}>
+      <button
+        type="button"
+        onClick={() => setCollapsed((c) => !c)}
+        className={`flex items-center gap-2 w-full text-left select-none group rounded-md -mx-1.5 px-1.5 py-1 transition-colors hover:bg-zinc-700/40 ${
+          collapsed ? "" : "mb-1 border-b border-zinc-700/50 rounded-b-none"
+        }`}
+        title={collapsed ? "Expandir turno" : "Colapsar turno"}
+        aria-expanded={!collapsed}
+      >
+        {/* Chevron recuadrado: deja claro que la cabecera del turno es clicable. */}
+        <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded border border-zinc-600/80 bg-zinc-800 text-[0.625rem] leading-none text-zinc-400 transition-colors group-hover:border-indigo-400/60 group-hover:bg-indigo-500/15 group-hover:text-indigo-200">
+          {collapsed ? "▸" : "▾"}
+        </span>
+        {label}
+        {collapsed ? (
+          <span className="text-zinc-500 text-xs truncate min-w-0 flex-1 normal-case font-normal tracking-normal">
+            {preview}
+          </span>
+        ) : (
+          <span className="ml-auto shrink-0 text-[0.625rem] uppercase tracking-wide text-zinc-600 opacity-0 transition-opacity group-hover:opacity-100">
+            colapsar
+          </span>
+        )}
+      </button>
+      {!collapsed && <div className="mt-1.5">{children}</div>}
+    </div>
+  );
+}
+
+// Primer turno del hilo: el pedido original + el resumen de lo que hizo Claude.
+// Solo se vuelve colapsable cuando hay follow-ups (es decir, hay más turnos);
+// en una task de un solo turno no tiene sentido el doble colapso.
+function OriginalTurn({
+  task,
+  isDone,
+  collapsible,
+  questions,
+  reload,
+}: {
+  task: TaskView;
+  isDone: boolean;
+  collapsible: boolean;
+  questions: TaskView["questions"];
+  reload: () => Promise<unknown>;
+}) {
+  const content = (
+    <>
+      {task.body && (
+        <p className="text-zinc-400 whitespace-pre-wrap leading-relaxed">
+          {task.body}
+        </p>
+      )}
+      {task.summary ? (
+        <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/[0.06] p-2.5">
+          <div className="text-[0.625rem] uppercase tracking-wide text-emerald-400/80 mb-1">
+            📝 Resumen
+          </div>
+          <div className="md">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{task.summary}</ReactMarkdown>
+          </div>
+        </div>
+      ) : (
+        isDone && (
+          <p className="text-[0.6875rem] text-amber-400/70">
+            ⚠ Tarea hecha sin resumen.
+          </p>
+        )
+      )}
+      {questions.length > 0 && (
+        <div className="space-y-2">
+          {questions.map((q) => (
+            <QuestionBlock key={q.id} q={q} reload={reload} />
+          ))}
+        </div>
+      )}
+    </>
+  );
+  if (!collapsible) return content;
+  return (
+    <CollapsibleTurn
+      label={
+        <span className="text-[0.625rem] uppercase tracking-wide text-zinc-400/80 shrink-0">
+          📋 Pedido original
+        </span>
+      }
+      preview={task.body || task.title}
+    >
+      <div className="space-y-3">{content}</div>
+    </CollapsibleTurn>
+  );
+}
+
+function FollowupBlock({
+  f,
+  questions,
+  reload,
+}: {
+  f: TaskView["followups"][number];
+  questions: TaskView["questions"];
+  reload: () => Promise<unknown>;
+}) {
+  return (
+    <CollapsibleTurn
+      containerClass={`rounded-lg border p-3 ${
         f.resolved_at
           ? "border-zinc-800 bg-zinc-800/40"
           : "border-indigo-500/40 bg-indigo-500/10"
       }`}
+      label={
+        <span className="text-[0.625rem] uppercase tracking-wide text-indigo-300/80 shrink-0">
+          ↩ Pediste
+        </span>
+      }
+      preview={f.text}
     >
-      <div className="text-[0.625rem] uppercase tracking-wide text-indigo-300/80 mb-1">
-        ↩ Pediste
-      </div>
       <p className="text-zinc-200 whitespace-pre-wrap text-[0.8125rem] leading-relaxed">
         {f.text}
       </p>
@@ -1748,7 +1909,14 @@ function FollowupBlock({ f }: { f: TaskView["followups"][number] }) {
           ⏳ pendiente — un worker lo va a retomar
         </p>
       )}
-    </div>
+      {questions.length > 0 && (
+        <div className="mt-2 space-y-2">
+          {questions.map((q) => (
+            <QuestionBlock key={q.id} q={q} reload={reload} />
+          ))}
+        </div>
+      )}
+    </CollapsibleTurn>
   );
 }
 
