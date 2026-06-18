@@ -283,13 +283,21 @@ const commands = {
     if (!id) fail("show requires a task id");
     const t = db.prepare("SELECT * FROM task WHERE id = ?").get(id);
     if (!t) fail(`task not found: ${id}`);
+    const allAtt = db
+      .prepare(
+        "SELECT id, question_id, filename, path, mime FROM attachment WHERE task_id = ? ORDER BY id"
+      )
+      .all(id);
     const questions = db
       .prepare("SELECT * FROM question WHERE task_id = ? ORDER BY id")
       .all(id)
-      .map((q) => ({ ...q, answered: !!q.answered }));
-    const attachments = db
-      .prepare("SELECT id, filename, path, mime FROM attachment WHERE task_id = ? ORDER BY id")
-      .all(id);
+      .map((q) => ({
+        ...q,
+        answered: !!q.answered,
+        attachments: allAtt.filter((a) => a.question_id === q.id),
+      }));
+    // Adjuntos a nivel task (los de respuestas se listan bajo su pregunta).
+    const attachments = allAtt.filter((a) => a.question_id == null);
     const followups = db
       .prepare("SELECT * FROM followup WHERE task_id = ? ORDER BY id")
       .all(id);
@@ -308,6 +316,9 @@ const commands = {
       for (const q of x.questions) {
         console.log(`  Q#${q.id}: ${q.text}`);
         console.log(`    ${q.answered ? `A: ${q.answer}` : "(sin responder)"}`);
+        for (const a of q.attachments) {
+          console.log(`      📎 ${a.path}`);
+        }
       }
       for (const f of x.followups) {
         console.log(`  ↩ F#${f.id}: ${f.text}`);
@@ -566,13 +577,22 @@ const commands = {
     }
     if (flags.unanswered) rows = rows.filter((q) => !q.answered);
     if (flags.answered) rows = rows.filter((q) => q.answered);
-    const data = rows.map((q) => ({ ...q, answered: !!q.answered }));
+    const attOf = db.prepare(
+      "SELECT id, filename, path, mime FROM attachment WHERE question_id = ? ORDER BY id"
+    );
+    const data = rows.map((q) => ({
+      ...q,
+      answered: !!q.answered,
+      // Adjuntos que el humano sumó al responder — abrilos con Read.
+      attachments: attOf.all(q.id),
+    }));
     out(flags, data, (r) =>
       r.length
         ? r.forEach((q) =>
             console.log(
               `Q#${q.id} (task ${q.task_id}) ${q.answered ? "✓" : "…"}  ${q.text}` +
-                (q.answered ? `\n    A: ${q.answer}` : "")
+                (q.answered ? `\n    A: ${q.answer}` : "") +
+                q.attachments.map((a) => `\n    📎 ${a.path}`).join("")
             )
           )
         : console.log("(no questions)")

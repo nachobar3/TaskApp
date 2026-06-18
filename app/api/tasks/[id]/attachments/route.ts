@@ -30,6 +30,10 @@ export async function POST(
   if (!file || typeof file === "string") {
     return NextResponse.json({ error: "file is required" }, { status: 400 });
   }
+  // Optional: tie the attachment to a question's answer instead of the task body.
+  const rawQ = form.get("question_id");
+  const questionId =
+    typeof rawQ === "string" && rawQ.trim() ? Number(rawQ) : null;
 
   const buf = Buffer.from(await file.arrayBuffer());
   const dir = path.join(attachmentsDir(), String(taskId));
@@ -45,6 +49,6 @@ export async function POST(
   const full = path.join(dir, stored);
   fs.writeFileSync(full, buf);
 
-  const rec = createAttachment(taskId, file.name || stored, full, mime);
+  const rec = createAttachment(taskId, file.name || stored, full, mime, questionId);
   return NextResponse.json({ id: rec.id, filename: rec.filename, mime: rec.mime });
 }

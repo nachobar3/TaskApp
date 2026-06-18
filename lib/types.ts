@@ -4,6 +4,12 @@
 export type Stage = "local" | "develop" | "production";
 export type Status = "todo" | "in_progress" | "blocked" | "done";
 
+export interface AttachmentView {
+  id: number;
+  filename: string;
+  mime: string;
+}
+
 export interface QuestionView {
   id: number;
   task_id: number;
@@ -12,12 +18,8 @@ export interface QuestionView {
   answered: boolean;
   created_at: string;
   answered_at: string | null;
-}
-
-export interface AttachmentView {
-  id: number;
-  filename: string;
-  mime: string;
+  // Imágenes/archivos que el humano adjuntó al responder esta pregunta.
+  attachments: AttachmentView[];
 }
 
 export interface FollowupView {

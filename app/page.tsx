@@ -150,9 +150,10 @@ async function api(url: string, method: string, body?: unknown) {
   return res.json().catch(() => ({}));
 }
 
-async function uploadAttachment(taskId: number, file: File) {
+async function uploadAttachment(taskId: number, file: File, questionId?: number) {
   const fd = new FormData();
   fd.append("file", file);
+  if (questionId) fd.append("question_id", String(questionId));
   const res = await fetch(`/api/tasks/${taskId}/attachments`, {
     method: "POST",
     body: fd,
@@ -738,6 +739,12 @@ function ProjectPanel({
   const [editingDest, setEditingDest] = useState(false);
   const [newBranch, setNewBranch] = useState("");
   const [newStage, setNewStage] = useState<"develop" | "production">("production");
+  // Borrador editable de la rama destino: el humano la TIPEA libremente (como
+  // antes), y los destinos guardados quedan de sugerencia en el datalist. El
+  // panel está keyed por project.id, así que arranca con la rama del proyecto y
+  // de ahí en más solo lo mueve el usuario (o el commit, que ya deja el mismo
+  // valor).
+  const [branchDraft, setBranchDraft] = useState(project.target_branch);
   const [showActivity, setShowActivity] = useState(false);
   const { confirm, alert, dialog } = useDialog();
   const now = Date.now();
@@ -785,6 +792,19 @@ function ProjectPanel({
       push_stage: stage,
     });
     await reload();
+  }
+
+  // Confirmar la rama tipeada a mano (Enter / blur). Vacío revierte al destino
+  // actual; si coincide con un destino guardado, hereda su stage.
+  async function commitBranchDraft() {
+    const b = branchDraft.trim();
+    if (!b) {
+      setBranchDraft(project.target_branch);
+      return;
+    }
+    if (b !== branchDraft) setBranchDraft(b);
+    const saved = project.branches.find((x) => x.branch === b);
+    await selectDest(b, saved ? saved.stage : project.push_stage);
   }
 
   async function addDest() {
@@ -983,20 +1003,40 @@ function ProjectPanel({
        <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-1.5">
           <span className="text-zinc-500">destino</span>
-          <select
-            value={`${project.target_branch} ${project.push_stage}`}
-            onChange={(e) => {
-              const [b, s] = e.target.value.split(" ");
-              selectDest(b, s);
+          <input
+            list={`branches-${project.id}`}
+            value={branchDraft}
+            onChange={(e) => setBranchDraft(e.target.value)}
+            onBlur={commitBranchDraft}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                (e.target as HTMLInputElement).blur();
+              }
             }}
-            className={`px-2 py-1 rounded-md border outline-none cursor-pointer font-mono ${STAGE_STYLE[project.push_stage as Stage] ?? STAGE_STYLE.develop}`}
-            title="Rama a la que el loop pushea, y el stage al que pasan las tasks"
-          >
+            placeholder="rama"
+            spellCheck={false}
+            className="w-36 px-2 py-1 rounded-md bg-zinc-800/70 border border-zinc-700 text-zinc-100 placeholder-zinc-500 font-mono outline-none focus:border-indigo-500"
+            title="Rama a la que el loop pushea — escribila a mano o elegí un destino guardado"
+          />
+          <datalist id={`branches-${project.id}`}>
             {project.branches.map((b) => (
-              <option key={b.id} value={`${b.branch} ${b.stage}`}>
+              <option key={b.id} value={b.branch}>
                 {b.branch} → {b.stage}
               </option>
             ))}
+          </datalist>
+          <span className="text-zinc-600">→</span>
+          <select
+            value={project.push_stage}
+            onChange={(e) =>
+              selectDest(branchDraft.trim() || project.target_branch, e.target.value)
+            }
+            className={`px-2 py-1 rounded-md border outline-none cursor-pointer font-mono ${STAGE_STYLE[project.push_stage as Stage] ?? STAGE_STYLE.develop}`}
+            title="Stage al que pasan las tasks cuando se pushea a esta rama"
+          >
+            <option value="develop">develop</option>
+            <option value="production">production</option>
           </select>
           <button
             onClick={() => setEditingDest((v) => !v)}
@@ -1398,6 +1438,19 @@ function TaskRow({
   // Las tasks con novedad del loop sin ver arrancan expandidas al abrir el
   // proyecto; el resto, colapsadas.
   const [expanded, setExpanded] = useState(unseen);
+  // Una task que se resuelve mientras la tenés a la vista (ya estaba montada
+  // como in_progress y la habías visto, así que `expanded` quedó en false) no
+  // se re-expandía al pasar a done, porque `expanded` se fija solo al montar.
+  // Detectamos la transición a done y, si todavía no la leíste, la abrimos.
+  // Solo en la transición: el churn posterior (commit, stage, archivado) deja
+  // el status en done, así que no la reabre.
+  const prevStatus = useRef(task.status);
+  useEffect(() => {
+    if (prevStatus.current !== "done" && task.status === "done" && unseen) {
+      setExpanded(true);
+    }
+    prevStatus.current = task.status;
+  }, [task.status, unseen]);
   useEffect(() => {
     // Mientras la task esté a la vista en el proyecto abierto, dala por vista.
     // No alcanza con marcarla al montar: si el loop la vuelve a tocar (commit,
@@ -1546,35 +1599,30 @@ function TaskRow({
           )}
           {working ? (
             <span
-              className="inline-flex items-center gap-1.5 text-[0.6875rem] px-2 py-0.5 rounded-full border border-emerald-500/40 bg-emerald-500/15 text-emerald-300 max-w-full sm:max-w-xs"
-              title={`última señal ${timeAgo(task.last_heartbeat!, now)}`}
+              className="inline-flex items-center gap-1.5 text-[0.6875rem] px-2 py-0.5 rounded-full border border-emerald-500/40 bg-emerald-500/15 text-emerald-300 shrink-0"
+              title={`última señal ${timeAgo(task.last_heartbeat!, now)}${task.heartbeat_note ? ` · ${task.heartbeat_note}` : ""}`}
             >
               <span className="relative flex h-2 w-2 shrink-0">
                 <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75 animate-ping" />
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
               </span>
-              <span className="truncate">
-                trabajando
-                {task.heartbeat_note && ` · ${task.heartbeat_note}`}
-              </span>
+              trabajando
             </span>
           ) : workerBusy ? (
             <span
-              className="inline-flex items-center gap-1.5 text-[0.6875rem] px-2 py-0.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 text-emerald-300/90 max-w-full sm:max-w-xs"
+              className="inline-flex items-center gap-1.5 text-[0.6875rem] px-2 py-0.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 text-emerald-300/90 shrink-0"
               title={
                 "El worker está corriendo pero sin señal reciente — típico de un comando largo (tests, build)." +
                 (task.last_heartbeat
                   ? ` Última señal ${timeAgo(task.last_heartbeat, now)}.`
-                  : "")
+                  : "") +
+                (task.heartbeat_note ? ` · ${task.heartbeat_note}` : "")
               }
             >
               <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-400/70" />
-              <span className="truncate">
-                worker activo
-                {task.heartbeat_note && ` · ${task.heartbeat_note}`}
-                {task.last_heartbeat &&
-                  ` · señal ${timeAgo(task.last_heartbeat, now)}`}
-              </span>
+              worker activo
+              {task.last_heartbeat &&
+                ` · señal ${timeAgo(task.last_heartbeat, now)}`}
             </span>
           ) : stalled ? (
             <span
@@ -1661,6 +1709,27 @@ function TaskRow({
       {/* Detalle — solo cuando está expandida */}
       {expanded && (
         <div className="mt-3 pl-1.5 sm:pl-6 space-y-3">
+          {/* Nota del proceso en curso — el detalle de "en qué se está
+              trabajando" vive acá, con espacio y sin recortar. La pill del
+              header solo deja la señal de "trabajando" visible al colapsar. */}
+          {(working || workerBusy) && task.heartbeat_note && (
+            <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2">
+              <div className="flex items-center gap-1.5 text-[0.625rem] uppercase tracking-wide text-emerald-400/80 mb-1">
+                {working ? (
+                  <span className="relative flex h-2 w-2 shrink-0">
+                    <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75 animate-ping" />
+                    <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
+                  </span>
+                ) : (
+                  <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-400/70" />
+                )}
+                {working ? "trabajando" : "worker activo"}
+              </div>
+              <p className="text-sm text-emerald-100 whitespace-pre-wrap break-words">
+                {task.heartbeat_note}
+              </p>
+            </div>
+          )}
           {editing ? (
             <div className="space-y-2">
               <input
@@ -1922,11 +1991,45 @@ function QuestionBlock({
   reload: () => Promise<unknown>;
 }) {
   const [answer, setAnswer] = useState("");
+  const [images, setImages] = useState<PendingImage[]>([]);
+  const [dragOver, setDragOver] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  function addFiles(list: FileList | null | undefined) {
+    const imgs = imagesFromTransfer(list);
+    if (imgs.length === 0) return;
+    setImages((prev) => [
+      ...prev,
+      ...imgs.map((i) => ({ key: crypto.randomUUID(), ...i })),
+    ]);
+  }
+  function removeImage(key: string) {
+    setImages((prev) => {
+      const hit = prev.find((p) => p.key === key);
+      if (hit) URL.revokeObjectURL(hit.url);
+      return prev.filter((p) => p.key !== key);
+    });
+  }
+
   async function send() {
-    if (!answer.trim()) return;
-    await api(`/api/questions/${q.id}/answer`, "POST", { answer });
-    setAnswer("");
-    await reload();
+    if ((!answer.trim() && images.length === 0) || busy) return;
+    setBusy(true);
+    try {
+      // Las imágenes van primero, asociadas a esta pregunta: el worker las ve
+      // como adjuntos de la respuesta al leer la task.
+      for (const img of images) await uploadAttachment(q.task_id, img.file, q.id);
+      images.forEach((i) => URL.revokeObjectURL(i.url));
+      setImages([]);
+      // La API exige texto; si solo hay imágenes, dejamos una nota.
+      await api(`/api/questions/${q.id}/answer`, "POST", {
+        answer: answer.trim() || "(ver imágenes adjuntas)",
+      });
+      setAnswer("");
+      await reload();
+    } finally {
+      setBusy(false);
+    }
   }
 
   if (q.answered) {
@@ -1945,23 +2048,71 @@ function QuestionBlock({
           <p className="text-emerald-300 whitespace-pre-wrap text-[0.8125rem] leading-relaxed">
             {q.answer}
           </p>
+          {q.attachments.length > 0 && (
+            <div className="flex flex-wrap gap-2 mt-2">
+              {q.attachments.map((a) => (
+                <AttachmentThumb key={a.id} a={a} reload={reload} />
+              ))}
+            </div>
+          )}
         </div>
       </div>
     );
   }
 
   return (
-    <div className="rounded-lg border border-rose-500/40 bg-rose-500/10 p-3">
+    <div
+      className={`rounded-lg border bg-rose-500/10 p-3 ${
+        dragOver ? "border-indigo-500" : "border-rose-500/40"
+      }`}
+      onDragOver={(e) => {
+        e.preventDefault();
+        setDragOver(true);
+      }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        setDragOver(false);
+        addFiles(e.dataTransfer.files);
+      }}
+    >
       <div className="text-[0.625rem] uppercase tracking-wide text-rose-300/80 mb-1">
         ❓ Claude pregunta
       </div>
       <div className="md">
         <ReactMarkdown remarkPlugins={[remarkGfm]}>{q.text}</ReactMarkdown>
       </div>
+      {images.length > 0 && (
+        <div className="flex flex-wrap gap-2 mt-3">
+          {images.map((img) => (
+            <div key={img.key} className="relative group">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={img.url}
+                alt=""
+                className="h-16 w-16 object-cover rounded-md border border-zinc-700"
+              />
+              <button
+                onClick={() => removeImage(img.key)}
+                className="absolute -top-1.5 -right-1.5 h-5 w-5 rounded-full bg-zinc-800 border border-zinc-600 text-zinc-300 text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                title="Quitar"
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="flex gap-2 mt-3">
         <textarea
           value={answer}
           onChange={(e) => setAnswer(e.target.value)}
+          onPaste={(e) => {
+            if (e.clipboardData.files.length) {
+              e.preventDefault();
+              addFiles(e.clipboardData.files);
+            }
+          }}
           onKeyDown={(e) => {
             if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
               e.preventDefault();
@@ -1969,15 +2120,36 @@ function QuestionBlock({
             }
           }}
           rows={2}
-          placeholder="Tu respuesta… (Enter = nueva línea · Ctrl/⌘+Enter = enviar)"
+          placeholder="Tu respuesta… (Enter = nueva línea · Ctrl/⌘+Enter = enviar · pegá o arrastrá imágenes)"
           className="flex-1 px-2.5 py-1.5 rounded-md bg-zinc-900 border border-rose-500/40 text-zinc-100 placeholder-zinc-500 outline-none focus:border-rose-400 resize-y"
         />
-        <button
-          onClick={send}
-          className="px-3 py-1.5 rounded-md bg-rose-600 hover:bg-rose-500 text-white text-xs font-medium transition-colors self-start"
-        >
-          Responder
-        </button>
+        <div className="flex flex-col gap-1.5 self-start">
+          <button
+            onClick={send}
+            disabled={busy}
+            className="px-3 py-1.5 rounded-md bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white text-xs font-medium transition-colors"
+          >
+            {busy ? "Enviando…" : "Responder"}
+          </button>
+          <button
+            onClick={() => fileInput.current?.click()}
+            className="px-3 py-1 rounded-md border border-zinc-700 text-zinc-400 hover:text-indigo-400 hover:border-indigo-500 text-xs transition-colors"
+            title="Adjuntar imagen a la respuesta"
+          >
+            📎
+          </button>
+          <input
+            ref={fileInput}
+            type="file"
+            accept="image/*"
+            multiple
+            hidden
+            onChange={(e) => {
+              addFiles(e.target.files);
+              e.target.value = "";
+            }}
+          />
+        </div>
       </div>
     </div>
   );

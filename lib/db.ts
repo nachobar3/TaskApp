@@ -68,6 +68,7 @@ export interface Question {
 export interface Attachment {
   id: number;
   task_id: number;
+  question_id: number | null;
   filename: string;
   path: string;
   mime: string;
@@ -159,12 +160,20 @@ export function getState() {
             commit_requested: !!t.commit_requested,
             questions: questions
               .filter((q) => q.task_id === t.id)
-              .map((q) => ({ ...q, answered: !!q.answered })),
+              .map((q) => ({
+                ...q,
+                answered: !!q.answered,
+                // Adjuntos que el humano sumó al responder esta pregunta.
+                attachments: attachments
+                  .filter((a) => a.question_id === q.id)
+                  .map((a) => ({ id: a.id, filename: a.filename, mime: a.mime })),
+              })),
             followups: followups.filter((f) => f.task_id === t.id),
             // Don't leak absolute disk paths to the browser — id is enough to
-            // fetch the bytes via /api/attachments/<id>.
+            // fetch the bytes via /api/attachments/<id>. Solo los adjuntos a
+            // nivel task (los de respuestas viven bajo su pregunta).
             attachments: attachments
-              .filter((a) => a.task_id === t.id)
+              .filter((a) => a.task_id === t.id && a.question_id == null)
               .map((a) => ({ id: a.id, filename: a.filename, mime: a.mime })),
           })),
       })),
@@ -445,13 +454,14 @@ export function createAttachment(
   taskId: number,
   filename: string,
   filePath: string,
-  mime: string
+  mime: string,
+  questionId?: number | null
 ): Attachment {
   const info = db()
     .prepare(
-      "INSERT INTO attachment (task_id, filename, path, mime) VALUES (?, ?, ?, ?)"
+      "INSERT INTO attachment (task_id, question_id, filename, path, mime) VALUES (?, ?, ?, ?, ?)"
     )
-    .run(taskId, filename, filePath, mime);
+    .run(taskId, questionId ?? null, filename, filePath, mime);
   return db()
     .prepare("SELECT * FROM attachment WHERE id = ?")
     .get(info.lastInsertRowid) as Attachment;
