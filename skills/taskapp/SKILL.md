@@ -198,8 +198,9 @@ Una vez por iteración, revisá si el humano pidió trabajo de git:
 taskapp git-pending --json
 ```
 
-Devuelve `target_branch`, `push_requested`, y `tasks_to_commit` (tasks que el
-humano marcó para commitear). Si no hay nada pendiente, no toques git.
+Devuelve `target_branch`, `push_requested`, `tasks_to_commit` (tasks que el
+humano marcó para commitear) y `promote` (el PROCESO de promoción configurado
+para ese destino — ver más abajo). Si no hay nada pendiente, no toques git.
 
 **Para cada task en `tasks_to_commit`** (de la más vieja a la más nueva):
 1. `git add -A` en el repo.
@@ -216,13 +217,34 @@ humano marcó para commitear). Si no hay nada pendiente, no toques git.
    taskapp mark-committed <taskId> --hash "$(git rev-parse HEAD)"
    ```
 
-**Si `push_requested` es true**, después de commitear todo lo pendiente:
-```bash
-git push origin HEAD:<target_branch>     # ej. HEAD:develop
-```
-- Si sale bien: `taskapp mark-pushed`
-- Si falla: `taskapp mark-pushed --error "<motivo corto>"` y, si la causa
-  requiere una decisión mía (conflicto, credenciales), abrí un `taskapp ask`.
+**Si `push_requested` es true**, después de commitear todo lo pendiente,
+ejecutá el PROCESO DE PROMOCIÓN del destino. No asumas un push directo: cada
+repo configura cómo se entrega a esa rama. Leé `promote` de `git-pending`:
+
+- `promote.instructions` ya te dice, en texto, qué hacer (push / merge / PR) y
+  trae al final las instrucciones libres del humano (si las hay): seguilas al
+  pie, tienen prioridad sobre los pasos por defecto.
+- `promote.strategy` es la forma estructurada:
+  - **`push`** → `git push origin HEAD:<target_branch>` (fast-forward de los
+    commits nuevos).
+  - **`merge`** → traé `promote.from` a `target_branch` y pusheá (ej.:
+    `git fetch origin && git checkout <target_branch> && git merge --no-ff origin/<promote.from> && git push origin <target_branch>`).
+  - **`pr`** → abrí un PR `promote.from` → `target_branch` (ej.:
+    `gh pr create --base <target_branch> --head <promote.from>`). NO mergees por
+    tu cuenta salvo que las notas lo pidan: dejá el link del PR y marcá
+    needs-confirm para que el humano apruebe/mergee.
+
+Reportá el resultado:
+- Si sale bien (push/merge ejecutado): `taskapp mark-pushed`.
+- Si NO falló pero necesitás que el humano decida (rama divergida que requiere
+  merge manual, un PR que él tiene que aprobar, falta `promote.from`, etc.):
+  `taskapp mark-pushed --needs-confirm "<qué necesitás que decida>"`. Esto se
+  pinta ámbar en la UI (no rojo) y limpia el pedido para no re-intentar en loop.
+- Si falló de verdad (error de git/credenciales): `taskapp mark-pushed --error
+  "<motivo corto>"` y, si requiere una decisión mía, abrí un `taskapp ask`.
+
+⚠️ NUNCA fuerces un push (`--force`) ni resuelvas a ciegas una divergencia: ante
+la duda, `--needs-confirm` y que decida el humano.
 
 Nota: como git no separa archivos por tarea, el commit toma todo el working tree.
 Por eso conviene que cada task se commitee apenas se termina; si hay varias

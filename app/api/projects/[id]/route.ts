@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  clearPushStatus,
   deleteProject,
   setAutoWorker,
   setPoweredOff,
@@ -34,6 +35,10 @@ export async function PATCH(
   }
   if (isValidWorkerModel(body?.worker_model)) {
     setWorkerModel(Number(id), body.worker_model);
+  }
+  // Dismiss the "último push" banner (e.g. a needs-confirm/error left pinned).
+  if (body?.clear_push_status === true) {
+    clearPushStatus(Number(id));
   }
   return NextResponse.json({ ok: true });
 }

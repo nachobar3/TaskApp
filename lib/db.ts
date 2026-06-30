@@ -24,11 +24,15 @@ export interface Project {
   worker_model: string | null;
   created_at: string;
 }
+export type PromoteStrategy = "push" | "merge" | "pr";
 export interface ProjectBranch {
   id: number;
   project_id: number;
   branch: string;
   stage: string;
+  promote_strategy: string;
+  promote_from: string | null;
+  promote_notes: string | null;
   created_at: string;
 }
 export interface Document {
@@ -146,7 +150,14 @@ export function getState() {
     worker_running: pidAlive(p.worker_pid),
     branches: branches
       .filter((b) => b.project_id === p.id)
-      .map((b) => ({ id: b.id, branch: b.branch, stage: b.stage })),
+      .map((b) => ({
+        id: b.id,
+        branch: b.branch,
+        stage: b.stage,
+        promote_strategy: b.promote_strategy,
+        promote_from: b.promote_from,
+        promote_notes: b.promote_notes,
+      })),
     documents: documents
       .filter((doc) => doc.project_id === p.id)
       .map((doc) => ({
@@ -341,6 +352,17 @@ export function setPushRequested(projectId: number, requested: boolean) {
     .run(requested ? 1 : 0, projectId);
 }
 
+/**
+ * Clear the last push result banner (push_status / last_push_at). The human
+ * dismisses it from the UI; useful when the worker left a "needs-confirm" /
+ * error message that would otherwise stay pinned forever.
+ */
+export function clearPushStatus(projectId: number) {
+  db()
+    .prepare("UPDATE project SET push_status = NULL, last_push_at = NULL WHERE id = ?")
+    .run(projectId);
+}
+
 /** Select the active push destination (branch + stage) the loop will push to. */
 export function setPushDestination(
   projectId: number,
@@ -372,6 +394,28 @@ export function addProjectBranch(
         "ON CONFLICT(project_id, branch) DO UPDATE SET stage = excluded.stage"
     )
     .run(projectId, branch, stage);
+}
+
+/**
+ * Update the promotion process of a destination (how the worker delivers code
+ * to that branch): strategy + source branch + free-form instructions. The
+ * branch must belong to the project. A 'push' strategy clears the source.
+ */
+export function setBranchPromotion(
+  projectId: number,
+  branchId: number,
+  strategy: string,
+  from: string | null,
+  notes: string | null
+) {
+  const strat = strategy === "merge" || strategy === "pr" ? strategy : "push";
+  db()
+    .prepare(
+      `UPDATE project_branch
+          SET promote_strategy = ?, promote_from = ?, promote_notes = ?
+        WHERE id = ? AND project_id = ?`
+    )
+    .run(strat, strat === "push" ? null : from || null, notes || null, branchId, projectId);
 }
 
 /** Remove a destination, but never leave a project with zero destinations. */

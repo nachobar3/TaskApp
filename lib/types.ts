@@ -54,10 +54,16 @@ export interface TaskView {
   followups: FollowupView[];
 }
 
+export type PromoteStrategy = "push" | "merge" | "pr";
 export interface ProjectBranchView {
   id: number;
   branch: string;
   stage: string;
+  // Cómo el worker entrega el código a esta rama (cada repo diseña su proceso):
+  // push directo, merge de promote_from, o PR promote_from → branch.
+  promote_strategy: string;
+  promote_from: string | null;
+  promote_notes: string | null;
 }
 
 export interface DocumentView {

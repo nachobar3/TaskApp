@@ -5,6 +5,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   DocumentView,
+  ProjectBranchView,
   ProjectView,
   Stage,
   TaskView,
@@ -719,6 +720,123 @@ function useDialog() {
   return { confirm, alert, dialog };
 }
 
+// Editor del proceso de promoción de un destino: cómo el worker entrega el
+// código a esa rama. Cada repo diseña el suyo (push directo / merge / PR) y
+// todos se disparan con el mismo botón de la barra. Las notas son
+// instrucciones libres que el worker sigue al pie (pasos extra, checks, etc.).
+function BranchPromotionEditor({
+  branch,
+  remoteBranches,
+  onSave,
+}: {
+  branch: ProjectBranchView;
+  remoteBranches: string[] | null;
+  onSave: (fields: {
+    promote_strategy: string;
+    promote_from: string | null;
+    promote_notes: string | null;
+  }) => void | Promise<unknown>;
+}) {
+  // El componente persiste entre los reloads del poll (key = branch.id), así que
+  // el estado local del textarea sobrevive sin pisar lo que estás tipeando.
+  const [notes, setNotes] = useState(branch.promote_notes ?? "");
+
+  const strategy = branch.promote_strategy || "push";
+  const needsSource = strategy === "merge" || strategy === "pr";
+  // Opciones de rama origen: las del remoto menos la propia rama destino.
+  const sourceOptions = (remoteBranches ?? []).filter((b) => b !== branch.branch);
+
+  function save(next: {
+    promote_strategy?: string;
+    promote_from?: string | null;
+    promote_notes?: string | null;
+  }) {
+    onSave({
+      promote_strategy: next.promote_strategy ?? strategy,
+      promote_from:
+        next.promote_from !== undefined ? next.promote_from : branch.promote_from,
+      promote_notes:
+        next.promote_notes !== undefined
+          ? next.promote_notes
+          : branch.promote_notes,
+    });
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5 pl-1 text-[0.7rem]">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-zinc-500">proceso a prod</span>
+        <select
+          value={strategy}
+          onChange={(e) => save({ promote_strategy: e.target.value })}
+          className="px-1.5 py-0.5 rounded border border-zinc-700 bg-zinc-800/70 text-zinc-200 outline-none cursor-pointer"
+          title="Cómo el worker entrega el código a esta rama"
+        >
+          <option value="push">push directo</option>
+          <option value="merge">merge de otra rama</option>
+          <option value="pr">PR (pull request)</option>
+        </select>
+        {needsSource &&
+          (sourceOptions.length > 0 ? (
+            <>
+              <span className="text-zinc-600">desde</span>
+              <select
+                value={branch.promote_from ?? ""}
+                onChange={(e) =>
+                  save({ promote_from: e.target.value || null })
+                }
+                className="px-1.5 py-0.5 rounded border border-zinc-700 bg-zinc-800/70 text-zinc-200 font-mono outline-none cursor-pointer"
+                title="Rama origen del merge/PR"
+              >
+                <option value="">(elegí rama origen)</option>
+                {/* La rama guardada puede no estar en el remoto leído: mostrala igual */}
+                {branch.promote_from &&
+                  !sourceOptions.includes(branch.promote_from) && (
+                    <option value={branch.promote_from}>
+                      {branch.promote_from}
+                    </option>
+                  )}
+                {sourceOptions.map((b) => (
+                  <option key={b} value={b}>
+                    {b}
+                  </option>
+                ))}
+              </select>
+            </>
+          ) : (
+            <>
+              <span className="text-zinc-600">desde</span>
+              <input
+                defaultValue={branch.promote_from ?? ""}
+                onBlur={(e) =>
+                  save({ promote_from: e.target.value.trim() || null })
+                }
+                placeholder="rama origen (ej. develop)"
+                className="px-1.5 py-0.5 rounded border border-zinc-700 bg-zinc-800/70 text-zinc-200 font-mono outline-none focus:border-indigo-500 w-40"
+              />
+            </>
+          ))}
+        {needsSource && !branch.promote_from && (
+          <span className="text-amber-400" title="Falta la rama origen">
+            ⚠ falta rama origen
+          </span>
+        )}
+      </div>
+      <textarea
+        value={notes}
+        onChange={(e) => setNotes(e.target.value)}
+        onBlur={() => {
+          const v = notes.trim();
+          if (v !== (branch.promote_notes ?? "")) save({ promote_notes: v || null });
+        }}
+        placeholder="instrucciones extra para el worker (opcional): pasos, checks, a quién pedir aprobación…"
+        rows={2}
+        className="w-full px-2 py-1 rounded border border-zinc-800 bg-zinc-900/50 text-zinc-300 placeholder-zinc-600 outline-none focus:border-indigo-500 resize-y"
+      />
+    </div>
+  );
+}
+
 function ProjectPanel({
   project,
   doc,
@@ -739,12 +857,15 @@ function ProjectPanel({
   const [editingDest, setEditingDest] = useState(false);
   const [newBranch, setNewBranch] = useState("");
   const [newStage, setNewStage] = useState<"develop" | "production">("production");
-  // Borrador editable de la rama destino: el humano la TIPEA libremente (como
-  // antes), y los destinos guardados quedan de sugerencia en el datalist. El
-  // panel está keyed por project.id, así que arranca con la rama del proyecto y
-  // de ahí en más solo lo mueve el usuario (o el commit, que ya deja el mismo
-  // valor).
-  const [branchDraft, setBranchDraft] = useState(project.target_branch);
+  // Ramas reales del remoto del proyecto (se cargan desde git al abrir el
+  // editor). El humano elige el destino de esta lista en vez de tipearlo, así
+  // ve cómo se llaman de verdad las ramas de prod/dev en GitHub.
+  const [remote, setRemote] = useState<{
+    branches: string[];
+    remote: string | null;
+    error: string | null;
+  } | null>(null);
+  const [loadingRemote, setLoadingRemote] = useState(false);
   const [showActivity, setShowActivity] = useState(false);
   const { confirm, alert, dialog } = useDialog();
   const now = Date.now();
@@ -763,6 +884,29 @@ function ProjectPanel({
         !t.archived &&
         !t.commit_requested
     ).length;
+
+  // Destino de push activo y su proceso de promoción (cómo el worker entrega
+  // el código a esa rama). Determina el verbo del botón: push / promover / PR.
+  const activeDest = project.branches.find(
+    (b) => b.branch === project.target_branch
+  );
+  const promoteStrategy = activeDest?.promote_strategy ?? "push";
+  const promoteFrom = activeDest?.promote_from ?? null;
+  const pushVerb =
+    promoteStrategy === "merge"
+      ? `⬆ Promover ${promoteFrom ?? "?"} → ${project.target_branch}`
+      : promoteStrategy === "pr"
+        ? `⬆ PR ${promoteFrom ?? "?"} → ${project.target_branch}`
+        : `⬆ Push a ${project.target_branch} (→ ${project.push_stage})`;
+
+  // Cartel "último push": ok (zinc) · error (rojo) · confirm (ámbar, decisión).
+  const pushKind = project.push_status?.startsWith("error")
+    ? "error"
+    : project.push_status?.startsWith("confirm")
+      ? "confirm"
+      : "ok";
+  // Texto sin el prefijo "error:"/"confirm:" para el cartel ámbar/rojo.
+  const pushStatusBody = project.push_status?.replace(/^(error|confirm):\s*/, "");
 
   async function createDoc() {
     if (!docName.trim()) return;
@@ -794,27 +938,52 @@ function ProjectPanel({
     await reload();
   }
 
-  // Confirmar la rama tipeada a mano (Enter / blur). Vacío revierte al destino
-  // actual; si coincide con un destino guardado, hereda su stage.
-  async function commitBranchDraft() {
-    const b = branchDraft.trim();
-    if (!b) {
-      setBranchDraft(project.target_branch);
-      return;
+  // Trae las ramas reales del remoto del proyecto (git ls-remote vía la API) y
+  // preselecciona la primera que todavía no es un destino guardado.
+  async function loadRemote() {
+    setLoadingRemote(true);
+    try {
+      const r = (await api(
+        `/api/projects/${project.id}/branches`,
+        "GET"
+      )) as { branches: string[]; remote: string | null; error: string | null };
+      setRemote(r);
+      const taken = new Set(project.branches.map((b) => b.branch));
+      const firstFree = r.branches.find((b) => !taken.has(b));
+      setNewBranch(firstFree ?? r.branches[0] ?? "");
+    } catch (e) {
+      setRemote({
+        branches: [],
+        remote: null,
+        error: e instanceof Error ? e.message : "no se pudieron leer las ramas",
+      });
+    } finally {
+      setLoadingRemote(false);
     }
-    if (b !== branchDraft) setBranchDraft(b);
-    const saved = project.branches.find((x) => x.branch === b);
-    await selectDest(b, saved ? saved.stage : project.push_stage);
   }
 
-  async function addDest() {
-    const b = newBranch.trim();
+  // Abrir/cerrar el editor de destinos; al abrir, carga las ramas del remoto.
+  function toggleEditingDest() {
+    setEditingDest((v) => {
+      const next = !v;
+      if (next && !remote && !loadingRemote) loadRemote();
+      return next;
+    });
+  }
+
+  async function addDest(branch?: string, stage?: "develop" | "production") {
+    const b = (branch ?? newBranch).trim();
+    const s = stage ?? newStage;
     if (!b) return;
     await api(`/api/projects/${project.id}/branches`, "POST", {
       branch: b,
-      stage: newStage,
+      stage: s,
     });
-    setNewBranch("");
+    // Si tocás el stage del destino activo, sincronizá el push_stage del
+    // proyecto para que la barra no quede desfasada.
+    if (b === project.target_branch && s !== project.push_stage) {
+      await selectDest(b, s);
+    }
     await reload();
   }
 
@@ -834,10 +1003,17 @@ function ProjectPanel({
   }
 
   async function requestPush() {
+    const proc =
+      promoteStrategy === "merge"
+        ? `Proceso: MERGE ${promoteFrom ?? "?"} → ${project.target_branch} y push.`
+        : promoteStrategy === "pr"
+          ? `Proceso: abrir PR ${promoteFrom ?? "?"} → ${project.target_branch} (el merge final lo confirmás vos).`
+          : `Proceso: push directo a ${project.target_branch}.`;
     const ok = await confirm({
-      title: "Pedir push",
-      message: `Pedir push a la rama "${project.target_branch}" (las tasks pasan a stage "${project.push_stage}").\n\nEl loop, en su próxima iteración, va a commitear las tasks marcadas (${tasksToCommit}) y pushear.`,
-      confirmLabel: "Pushear",
+      title:
+        promoteStrategy === "push" ? "Pedir push" : "Promover a producción",
+      message: `Destino "${project.target_branch}" (las tasks pasan a stage "${project.push_stage}").\n\n${proc}\n\nEl loop, en su próxima iteración, va a commitear las tasks marcadas (${tasksToCommit}) y ejecutar el proceso configurado.`,
+      confirmLabel: promoteStrategy === "pr" ? "Abrir PR" : "Promover",
     });
     if (!ok) return;
     await api(`/api/projects/${project.id}/push-request`, "POST", {});
@@ -858,6 +1034,29 @@ function ProjectPanel({
 
   async function cancelPush() {
     await api(`/api/projects/${project.id}/push-request`, "POST", { requested: false });
+    await reload();
+  }
+
+  // Descarta el cartel "último push" (un needs-confirm/error que quedó fijo).
+  async function dismissPushStatus() {
+    await api(`/api/projects/${project.id}`, "PATCH", { clear_push_status: true });
+    await reload();
+  }
+
+  // Guarda el proceso de promoción de un destino (cómo el worker entrega el
+  // código a esa rama): estrategia + rama origen + instrucciones libres.
+  async function savePromotion(
+    branchId: number,
+    fields: {
+      promote_strategy: string;
+      promote_from: string | null;
+      promote_notes: string | null;
+    }
+  ) {
+    await api(`/api/projects/${project.id}/branches`, "PATCH", {
+      branch_id: branchId,
+      ...fields,
+    });
     await reload();
   }
 
@@ -1003,43 +1202,34 @@ function ProjectPanel({
        <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-1.5">
           <span className="text-zinc-500">destino</span>
-          <input
-            list={`branches-${project.id}`}
-            value={branchDraft}
-            onChange={(e) => setBranchDraft(e.target.value)}
-            onBlur={commitBranchDraft}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                (e.target as HTMLInputElement).blur();
-              }
+          <select
+            value={project.target_branch}
+            onChange={(e) => {
+              const dest = project.branches.find((b) => b.branch === e.target.value);
+              if (dest) selectDest(dest.branch, dest.stage);
             }}
-            placeholder="rama"
-            spellCheck={false}
-            className="w-36 px-2 py-1 rounded-md bg-zinc-800/70 border border-zinc-700 text-zinc-100 placeholder-zinc-500 font-mono outline-none focus:border-indigo-500"
-            title="Rama a la que el loop pushea — escribila a mano o elegí un destino guardado"
-          />
-          <datalist id={`branches-${project.id}`}>
+            className="w-44 px-2 py-1 rounded-md bg-zinc-800/70 border border-zinc-700 text-zinc-100 font-mono outline-none focus:border-indigo-500 cursor-pointer"
+            title="Rama a la que el loop pushea — elegí uno de los destinos configurados (✎ para agregar ramas reales del remoto)"
+          >
+            {!project.branches.some((b) => b.branch === project.target_branch) && (
+              <option value={project.target_branch}>
+                {project.target_branch} (sin configurar)
+              </option>
+            )}
             {project.branches.map((b) => (
               <option key={b.id} value={b.branch}>
                 {b.branch} → {b.stage}
               </option>
             ))}
-          </datalist>
-          <span className="text-zinc-600">→</span>
-          <select
-            value={project.push_stage}
-            onChange={(e) =>
-              selectDest(branchDraft.trim() || project.target_branch, e.target.value)
-            }
-            className={`px-2 py-1 rounded-md border outline-none cursor-pointer font-mono ${STAGE_STYLE[project.push_stage as Stage] ?? STAGE_STYLE.develop}`}
+          </select>
+          <span
+            className={`px-2 py-1 rounded-md border font-mono ${STAGE_STYLE[project.push_stage as Stage] ?? STAGE_STYLE.develop}`}
             title="Stage al que pasan las tasks cuando se pushea a esta rama"
           >
-            <option value="develop">develop</option>
-            <option value="production">production</option>
-          </select>
+            {project.push_stage}
+          </span>
           <button
-            onClick={() => setEditingDest((v) => !v)}
+            onClick={toggleEditingDest}
             className="text-zinc-500 hover:text-zinc-300"
             title="Editar destinos del proyecto"
           >
@@ -1048,7 +1238,7 @@ function ProjectPanel({
         </div>
         {project.push_requested ? (
           <span className="inline-flex items-center gap-2 px-2.5 py-1 rounded-md border border-amber-500/40 bg-amber-500/15 text-amber-300">
-            ⏳ push pedido a {project.target_branch} — el loop lo ejecutará
+            ⏳ pedido a {project.target_branch} — el loop lo ejecutará
             <button
               onClick={cancelPush}
               className="text-amber-200/70 hover:text-amber-100"
@@ -1061,8 +1251,13 @@ function ProjectPanel({
           <button
             onClick={requestPush}
             className="px-3 py-1 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white font-medium transition-colors"
+            title={
+              promoteStrategy === "push"
+                ? "Pide al loop commitear y pushear al destino"
+                : "Pide al loop ejecutar el proceso de promoción configurado para este destino"
+            }
           >
-            ⬆ Push a {project.target_branch} (→ {project.push_stage})
+            {pushVerb}
             {tasksToCommit > 0 ? ` · ${tasksToCommit} a commitear` : ""}
           </button>
         )}
@@ -1075,67 +1270,192 @@ function ProjectPanel({
           ⎇ Commit all
           {tasksCommittable > 0 ? ` · ${tasksCommittable}` : ""}
         </button>
-        {project.last_push_at && (
-          <span
-            className={
-              project.push_status?.startsWith("error")
-                ? "text-rose-400"
-                : "text-zinc-500"
-            }
-          >
-            último push: {project.push_status} · {timeAgo(project.last_push_at, now)}
-          </span>
-        )}
+        {project.last_push_at &&
+          (pushKind === "confirm" ? (
+            // El worker no falló: necesita que el humano decida (promoción que
+            // requiere merge/PR, rama divergida, etc.). Ámbar, no rojo.
+            <span className="inline-flex items-start gap-2 px-2.5 py-1 rounded-md border border-amber-500/40 bg-amber-500/15 text-amber-300 max-w-full">
+              <span className="min-w-0">
+                <span className="font-medium">⚠ necesita tu decisión:</span>{" "}
+                {pushStatusBody}{" "}
+                <span className="text-amber-300/60">
+                  · {timeAgo(project.last_push_at, now)}
+                </span>
+              </span>
+              <button
+                onClick={dismissPushStatus}
+                className="text-amber-200/70 hover:text-amber-100 shrink-0"
+                title="Descartar"
+              >
+                ✕
+              </button>
+            </span>
+          ) : pushKind === "error" ? (
+            <span className="inline-flex items-start gap-2 text-rose-400 max-w-full">
+              <span className="min-w-0">
+                último push: error: {pushStatusBody} ·{" "}
+                {timeAgo(project.last_push_at, now)}
+              </span>
+              <button
+                onClick={dismissPushStatus}
+                className="text-rose-300/70 hover:text-rose-200 shrink-0"
+                title="Descartar"
+              >
+                ✕
+              </button>
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-2 text-zinc-500">
+              último push: {project.push_status} ·{" "}
+              {timeAgo(project.last_push_at, now)}
+              <button
+                onClick={dismissPushStatus}
+                className="text-zinc-600 hover:text-zinc-400"
+                title="Descartar"
+              >
+                ✕
+              </button>
+            </span>
+          ))}
        </div>
 
        {/* Editor de destinos (rama → stage) del proyecto */}
        {editingDest && (
         <div className="flex flex-col gap-2 p-3 rounded-md border border-zinc-800 bg-zinc-900/40">
-          <div className="flex flex-col gap-1">
+          {/* Estado del remoto: URL + refresh de las ramas reales */}
+          <div className="flex items-center gap-2 text-[0.7rem] text-zinc-500">
+            <span>remoto:</span>
+            {loadingRemote ? (
+              <span className="text-zinc-400">leyendo ramas…</span>
+            ) : remote?.error ? (
+              <span className="text-rose-400" title={remote.error}>
+                ⚠ {remote.error}
+              </span>
+            ) : remote?.remote ? (
+              <span className="font-mono text-zinc-400 truncate max-w-[60%]">
+                {remote.remote}
+                <span className="text-zinc-600"> · {remote.branches.length} ramas</span>
+              </span>
+            ) : (
+              <span className="text-zinc-600">—</span>
+            )}
+            <button
+              onClick={loadRemote}
+              disabled={loadingRemote}
+              className="text-zinc-500 hover:text-zinc-300 disabled:opacity-40"
+              title="Releer las ramas del remoto"
+            >
+              ⟳
+            </button>
+          </div>
+
+          <div className="flex flex-col gap-2">
             {project.branches.map((b) => (
-              <div key={b.id} className="flex items-center gap-2">
-                <span className="font-mono text-zinc-300">{b.branch}</span>
-                <span className="text-zinc-600">→</span>
-                <span
-                  className={`px-1.5 py-0.5 rounded border ${STAGE_STYLE[b.stage as Stage] ?? STAGE_STYLE.develop}`}
-                >
-                  {b.stage}
-                </span>
-                {project.branches.length > 1 && (
-                  <button
-                    onClick={() => removeDest(b.id)}
-                    className="text-zinc-600 hover:text-rose-400"
-                    title="Borrar destino"
+              <div
+                key={b.id}
+                className="flex flex-col gap-1.5 p-2 rounded border border-zinc-800/80 bg-zinc-900/30"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-zinc-300">{b.branch}</span>
+                  <span className="text-zinc-600">→</span>
+                  <select
+                    value={b.stage}
+                    onChange={(e) =>
+                      addDest(b.branch, e.target.value as "develop" | "production")
+                    }
+                    className={`px-1.5 py-0.5 rounded border outline-none cursor-pointer text-xs ${STAGE_STYLE[b.stage as Stage] ?? STAGE_STYLE.develop}`}
+                    title="Stage de este destino"
                   >
-                    ✕
-                  </button>
-                )}
+                    <option value="develop">develop</option>
+                    <option value="production">production</option>
+                  </select>
+                  {!remote?.error &&
+                    remote &&
+                    !remote.branches.includes(b.branch) && (
+                      <span
+                        className="text-amber-400 text-[0.7rem]"
+                        title="Esta rama no existe en el remoto"
+                      >
+                        ⚠ no está en el remoto
+                      </span>
+                    )}
+                  {project.branches.length > 1 && (
+                    <button
+                      onClick={() => removeDest(b.id)}
+                      className="ml-auto text-zinc-600 hover:text-rose-400"
+                      title="Borrar destino"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+                <BranchPromotionEditor
+                  branch={b}
+                  remoteBranches={remote?.branches ?? null}
+                  onSave={(fields) => savePromotion(b.id, fields)}
+                />
               </div>
             ))}
           </div>
+
+          {/* Agregar destino: se elige una rama REAL del remoto, sin tipear */}
           <div className="flex items-center gap-2 pt-1 border-t border-zinc-800">
-            <input
-              value={newBranch}
-              onChange={(e) => setNewBranch(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && addDest()}
-              placeholder="rama"
-              className="w-28 px-2 py-1 rounded-md bg-zinc-800/70 border border-zinc-700 text-zinc-100 font-mono outline-none focus:border-indigo-500"
-            />
-            <span className="text-zinc-600">→</span>
-            <select
-              value={newStage}
-              onChange={(e) => setNewStage(e.target.value as "develop" | "production")}
-              className={`px-2 py-1 rounded-md border outline-none cursor-pointer ${STAGE_STYLE[newStage]}`}
-            >
-              <option value="develop">develop</option>
-              <option value="production">production</option>
-            </select>
-            <button
-              onClick={addDest}
-              className="px-2 py-1 rounded-md bg-zinc-700 hover:bg-zinc-600 text-zinc-100"
-            >
-              + agregar
-            </button>
+            {(() => {
+              const taken = new Set(project.branches.map((b) => b.branch));
+              const available = (remote?.branches ?? []).filter(
+                (b) => !taken.has(b)
+              );
+              if (loadingRemote) {
+                return <span className="text-zinc-500">leyendo ramas del remoto…</span>;
+              }
+              if (!remote || remote.error) {
+                return (
+                  <span className="text-zinc-500">
+                    no hay ramas del remoto para elegir
+                    {remote?.error ? "" : " (probá ⟳)"}
+                  </span>
+                );
+              }
+              if (available.length === 0) {
+                return (
+                  <span className="text-zinc-500">
+                    todas las ramas del remoto ya son destinos
+                  </span>
+                );
+              }
+              return (
+                <>
+                  <select
+                    value={newBranch}
+                    onChange={(e) => setNewBranch(e.target.value)}
+                    className="w-40 px-2 py-1 rounded-md bg-zinc-800/70 border border-zinc-700 text-zinc-100 font-mono outline-none focus:border-indigo-500 cursor-pointer"
+                  >
+                    {available.map((b) => (
+                      <option key={b} value={b}>
+                        {b}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="text-zinc-600">→</span>
+                  <select
+                    value={newStage}
+                    onChange={(e) =>
+                      setNewStage(e.target.value as "develop" | "production")
+                    }
+                    className={`px-2 py-1 rounded-md border outline-none cursor-pointer ${STAGE_STYLE[newStage]}`}
+                  >
+                    <option value="develop">develop</option>
+                    <option value="production">production</option>
+                  </select>
+                  <button
+                    onClick={() => addDest()}
+                    className="px-2 py-1 rounded-md bg-zinc-700 hover:bg-zinc-600 text-zinc-100"
+                  >
+                    + agregar
+                  </button>
+                </>
+              );
+            })()}
           </div>
         </div>
        )}
@@ -1731,6 +2051,7 @@ function TaskRow({
             </div>
           )}
           {editing ? (
+            <>
             <div className="space-y-2">
               <input
                 autoFocus
@@ -1771,39 +2092,70 @@ function TaskRow({
                 </button>
               </div>
             </div>
+            {task.attachments.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {task.attachments.map((a) => (
+                  <AttachmentThumb key={a.id} a={a} reload={reload} />
+                ))}
+              </div>
+            )}
+            {task.followups.length > 0 && (
+              <div className="space-y-2">
+                {task.followups.map((f) => (
+                  <FollowupBlock
+                    key={f.id}
+                    f={f}
+                    questions={questionsByTurn.byFollowup.get(f.id) ?? []}
+                    reload={reload}
+                  />
+                ))}
+              </div>
+            )}
+            </>
           ) : (
-            <OriginalTurn
-              task={task}
-              isDone={isDone}
-              collapsible={task.followups.length > 0}
-              questions={questionsByTurn.original}
-              reload={reload}
-            />
-          )}
+            <>
+              {/* Hilo invertido: el input para escribir va arriba de todo y el
+                  turno más nuevo queda siempre a la vista; el pedido original
+                  baja al fondo. Mientras haya una pregunta del sistema sin
+                  responder, ocultamos este campo: confunde con el input de
+                  respuesta (que vive dentro de la pregunta) y el humano termina
+                  escribiendo acá sin disparar la respuesta. */}
+              {openQuestions.length === 0 && (
+                <FollowupInput taskId={task.id} done={isDone} reload={reload} />
+              )}
 
-          {task.attachments.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {task.attachments.map((a) => (
-                <AttachmentThumb key={a.id} a={a} reload={reload} />
-              ))}
-            </div>
-          )}
+              {/* Pedidos posteriores del humano, del más nuevo al más viejo.
+                  Cada follow-up arrastra sus propias preguntas adentro. */}
+              {task.followups.length > 0 && (
+                <div className="space-y-2">
+                  {[...task.followups].reverse().map((f) => (
+                    <FollowupBlock
+                      key={f.id}
+                      f={f}
+                      questions={questionsByTurn.byFollowup.get(f.id) ?? []}
+                      reload={reload}
+                    />
+                  ))}
+                </div>
+              )}
 
-          {/* Hilo: pedidos posteriores del humano sobre esta misma task. Cada
-              follow-up arrastra sus propias preguntas adentro del turno. */}
-          {task.followups.length > 0 && (
-            <div className="space-y-2">
-              {task.followups.map((f) => (
-                <FollowupBlock
-                  key={f.id}
-                  f={f}
-                  questions={questionsByTurn.byFollowup.get(f.id) ?? []}
-                  reload={reload}
-                />
-              ))}
-            </div>
+              {task.attachments.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {task.attachments.map((a) => (
+                    <AttachmentThumb key={a.id} a={a} reload={reload} />
+                  ))}
+                </div>
+              )}
+
+              <OriginalTurn
+                task={task}
+                isDone={isDone}
+                collapsible={task.followups.length > 0}
+                questions={questionsByTurn.original}
+                reload={reload}
+              />
+            </>
           )}
-          {!editing && <FollowupInput taskId={task.id} done={isDone} reload={reload} />}
 
           {/* Controles */}
           <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -2271,7 +2623,7 @@ function OriginalTurn({
       )}
       {questions.length > 0 && (
         <div className="space-y-2">
-          {questions.map((q) => (
+          {[...questions].reverse().map((q) => (
             <QuestionBlock key={q.id} q={q} reload={reload} />
           ))}
         </div>
@@ -2337,7 +2689,7 @@ function FollowupBlock({
       )}
       {questions.length > 0 && (
         <div className="mt-2 space-y-2">
-          {questions.map((q) => (
+          {[...questions].reverse().map((q) => (
             <QuestionBlock key={q.id} q={q} reload={reload} />
           ))}
         </div>
