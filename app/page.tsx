@@ -94,6 +94,31 @@ function persistSeen(key: string, s: SeenMap) {
   }
 }
 
+// Borrador de "Nueva tarea" persistido por documento, así lo tipeado sobrevive
+// cambiar de proyecto/documento (que remonta el panel) y también reloads. Las
+// imágenes adjuntas no se persisten (son blobs efímeros), solo título y cuerpo.
+type Draft = { title: string; body: string };
+const DRAFT_KEY = (docId: number) => `taskapp:draft:${docId}`;
+function loadDraft(docId: number): Draft {
+  if (typeof window === "undefined") return { title: "", body: "" };
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY(docId));
+    if (!raw) return { title: "", body: "" };
+    const d = JSON.parse(raw) as Partial<Draft>;
+    return { title: d.title ?? "", body: d.body ?? "" };
+  } catch {
+    return { title: "", body: "" };
+  }
+}
+function saveDraft(docId: number, d: Draft) {
+  try {
+    if (!d.title && !d.body) localStorage.removeItem(DRAFT_KEY(docId));
+    else localStorage.setItem(DRAFT_KEY(docId), JSON.stringify(d));
+  } catch {
+    /* localStorage no disponible: el borrador no persiste, no es crítico */
+  }
+}
+
 // Marca temporal de la primera vez que se abrió la app (se persiste y nunca
 // cambia). Las novedades del loop anteriores a este instante no se marcan, así
 // no inundamos de ✦ todo el historial preexistente. Novedades posteriores que
@@ -175,6 +200,19 @@ function imagesFromTransfer(
   return Array.from(list)
     .filter((f) => f.type.startsWith("image/"))
     .map((file) => ({ file, url: URL.createObjectURL(file) }));
+}
+
+// Selector de elementos enfocables, para saltar el foco de un panel a otro con
+// el teclado.
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+// Lleva el foco al primer elemento enfocable dentro de `el` (o a `el` mismo si
+// no hay ninguno y es enfocable).
+function focusFirstIn(el: HTMLElement | null) {
+  if (!el) return;
+  const target = el.querySelector<HTMLElement>(FOCUSABLE) ?? el;
+  target.focus();
 }
 
 export default function Home() {
@@ -282,6 +320,39 @@ export default function Home() {
 
   const totalOpenQuestions = projects.reduce((n, p) => n + openQuestionCount(p), 0);
 
+  // Ctrl/⌘ + →/← salta el foco entre el sidebar y el panel principal, para no
+  // tener que pasar con el mouse (complementa el Ctrl/⌘ + ↑/↓ que cicla
+  // proyectos). Se ignora dentro de inputs/textarea para no pisar la navegación
+  // por palabra del caret.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      const el = document.activeElement as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable))
+        return;
+      if (e.key === "ArrowRight") {
+        const main = document.getElementById("main-panel");
+        if (!main) return;
+        e.preventDefault();
+        // Preferimos el input de título de nueva tarea; si no está en pantalla
+        // (otra vista), caemos al primer enfocable del panel.
+        const newTask = document.getElementById("new-task-title");
+        if (newTask) newTask.focus();
+        else focusFirstIn(main);
+      } else {
+        const aside = document.querySelector<HTMLElement>("[data-sidebar]");
+        if (!aside) return;
+        e.preventDefault();
+        const active = aside.querySelector<HTMLElement>('[data-active="true"]');
+        if (active) active.focus();
+        else focusFirstIn(aside);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   return (
     <div className="flex h-dvh flex-col md:flex-row text-[0.8125rem] sm:text-sm text-zinc-300">
       {/* Top bar — solo mobile */}
@@ -338,7 +409,7 @@ export default function Home() {
         />
       </div>
 
-      <main className="flex-1 overflow-y-auto bg-zinc-950">
+      <main id="main-panel" tabIndex={-1} className="flex-1 overflow-y-auto bg-zinc-950 outline-none">
         {!project ? (
           <Empty />
         ) : (
@@ -377,6 +448,7 @@ function ProjectButton({
   return (
     <button
       onClick={() => onSelect(p.id)}
+      data-active={active || undefined}
       className={`w-full text-left px-3 py-2 rounded-lg flex items-center gap-2 transition-colors ${
         active
           ? waiting
@@ -514,7 +586,7 @@ function Sidebar({
   }, []);
 
   return (
-    <aside className="w-64 shrink-0 border-r border-zinc-800/80 bg-zinc-900 flex flex-col">
+    <aside data-sidebar className="w-64 shrink-0 border-r border-zinc-800/80 bg-zinc-900 flex flex-col">
       <div className="px-4 py-3.5 border-b border-zinc-800/80 flex items-center gap-2.5">
         <TasksLogo box="h-7 w-7 rounded-lg" icon="h-4 w-4" />
         <div>
@@ -857,6 +929,10 @@ function ProjectPanel({
   const [editingDest, setEditingDest] = useState(false);
   const [newBranch, setNewBranch] = useState("");
   const [newStage, setNewStage] = useState<"develop" | "production">("production");
+  // Escribir el nombre de la rama a mano en vez de elegirla de la lista del
+  // remoto. Imprescindible para destinos que todavía no existen en el remoto
+  // (ej. `develop`) o cuando `git ls-remote` no las trajo.
+  const [manualBranch, setManualBranch] = useState(false);
   // Ramas reales del remoto del proyecto (se cargan desde git al abrir el
   // editor). El humano elige el destino de esta lista en vez de tipearlo, así
   // ve cómo se llaman de verdad las ramas de prod/dev en GitHub.
@@ -867,6 +943,12 @@ function ProjectPanel({
   } | null>(null);
   const [loadingRemote, setLoadingRemote] = useState(false);
   const [showActivity, setShowActivity] = useState(false);
+  // Borrador de la respuesta del humano al cartel ámbar "necesita tu decisión".
+  const [pushDecision, setPushDecision] = useState("");
+  const [sendingDecision, setSendingDecision] = useState(false);
+  // Borrador de la respuesta del humano al cartel ámbar de sync remoto.
+  const [pullDecision, setPullDecision] = useState("");
+  const [sendingPullDecision, setSendingPullDecision] = useState(false);
   const { confirm, alert, dialog } = useDialog();
   const now = Date.now();
 
@@ -907,6 +989,14 @@ function ProjectPanel({
       : "ok";
   // Texto sin el prefijo "error:"/"confirm:" para el cartel ámbar/rojo.
   const pushStatusBody = project.push_status?.replace(/^(error|confirm):\s*/, "");
+
+  // Cartel "último sync": mismo esquema que push (ok/error/confirm).
+  const pullKind = project.pull_status?.startsWith("error")
+    ? "error"
+    : project.pull_status?.startsWith("confirm")
+      ? "confirm"
+      : "ok";
+  const pullStatusBody = project.pull_status?.replace(/^(error|confirm):\s*/, "");
 
   async function createDoc() {
     if (!docName.trim()) return;
@@ -1041,6 +1131,71 @@ function ProjectPanel({
   async function dismissPushStatus() {
     await api(`/api/projects/${project.id}`, "PATCH", { clear_push_status: true });
     await reload();
+  }
+
+  // Responde el cartel ámbar "necesita tu decisión": crea una task con la
+  // decisión, descarta el cartel y relanza un worker para que la ejecute.
+  async function sendPushDecision() {
+    const decision = pushDecision.trim();
+    if (!decision || sendingDecision) return;
+    setSendingDecision(true);
+    try {
+      await api(`/api/projects/${project.id}/push-decision`, "POST", { decision });
+      setPushDecision("");
+      await reload();
+    } catch (e) {
+      await alert({
+        title: "No se pudo enviar la decisión",
+        message: e instanceof Error ? e.message : "Error desconocido",
+        variant: "danger",
+      });
+    } finally {
+      setSendingDecision(false);
+    }
+  }
+
+  // --- Sync remoto (pull): pedir que el worker traiga del remoto e integre ---
+
+  async function requestPull() {
+    const ok = await confirm({
+      title: "Sync remoto",
+      message: `Traer del remoto la rama "${project.target_branch}" e integrar los cambios locales.\n\nEl loop, en su próxima iteración, va a hacer fetch e integrar sin pisar trabajo local. Si hay una divergencia real, te va a pedir una decisión.`,
+      confirmLabel: "Sincronizar",
+    });
+    if (!ok) return;
+    await api(`/api/projects/${project.id}/pull-request`, "POST", {});
+    await reload();
+  }
+
+  async function cancelPull() {
+    await api(`/api/projects/${project.id}/pull-request`, "POST", { requested: false });
+    await reload();
+  }
+
+  // Descarta el cartel "último sync".
+  async function dismissPullStatus() {
+    await api(`/api/projects/${project.id}`, "PATCH", { clear_pull_status: true });
+    await reload();
+  }
+
+  // Responde el cartel ámbar del sync: crea una task con la decisión y relanza.
+  async function sendPullDecision() {
+    const decision = pullDecision.trim();
+    if (!decision || sendingPullDecision) return;
+    setSendingPullDecision(true);
+    try {
+      await api(`/api/projects/${project.id}/pull-decision`, "POST", { decision });
+      setPullDecision("");
+      await reload();
+    } catch (e) {
+      await alert({
+        title: "No se pudo enviar la decisión",
+        message: e instanceof Error ? e.message : "Error desconocido",
+        variant: "danger",
+      });
+    } finally {
+      setSendingPullDecision(false);
+    }
   }
 
   // Guarda el proceso de promoción de un destino (cómo el worker entrega el
@@ -1270,24 +1425,69 @@ function ProjectPanel({
           ⎇ Commit all
           {tasksCommittable > 0 ? ` · ${tasksCommittable}` : ""}
         </button>
+        {project.pull_requested ? (
+          <span className="inline-flex items-center gap-2 px-2.5 py-1 rounded-md border border-amber-500/40 bg-amber-500/15 text-amber-300">
+            ⏳ sync pedido a {project.target_branch} — el loop lo ejecutará
+            <button
+              onClick={cancelPull}
+              className="text-amber-200/70 hover:text-amber-100"
+              title="Cancelar pedido de sync"
+            >
+              ✕
+            </button>
+          </span>
+        ) : (
+          <button
+            onClick={requestPull}
+            className="px-3 py-1 rounded-md bg-violet-600 hover:bg-violet-500 text-white font-medium transition-colors"
+            title={`Pide al loop traer del remoto la rama ${project.target_branch} e integrar los cambios locales`}
+          >
+            ⟲ Sync remoto
+          </button>
+        )}
         {project.last_push_at &&
           (pushKind === "confirm" ? (
             // El worker no falló: necesita que el humano decida (promoción que
             // requiere merge/PR, rama divergida, etc.). Ámbar, no rojo.
-            <span className="inline-flex items-start gap-2 px-2.5 py-1 rounded-md border border-amber-500/40 bg-amber-500/15 text-amber-300 max-w-full">
-              <span className="min-w-0">
-                <span className="font-medium">⚠ necesita tu decisión:</span>{" "}
-                {pushStatusBody}{" "}
-                <span className="text-amber-300/60">
-                  · {timeAgo(project.last_push_at, now)}
+            // Respondés acá mismo: tu decisión se convierte en una task y
+            // relanza un worker que la ejecuta.
+            <span className="flex flex-col gap-2 px-2.5 py-2 rounded-md border border-amber-500/40 bg-amber-500/15 text-amber-300 w-full max-w-full">
+              <span className="inline-flex items-start gap-2">
+                <span className="min-w-0">
+                  <span className="font-medium">⚠ necesita tu decisión:</span>{" "}
+                  {pushStatusBody}{" "}
+                  <span className="text-amber-300/60">
+                    · {timeAgo(project.last_push_at, now)}
+                  </span>
                 </span>
+                <button
+                  onClick={dismissPushStatus}
+                  className="text-amber-200/70 hover:text-amber-100 shrink-0 ml-auto"
+                  title="Descartar sin responder"
+                >
+                  ✕
+                </button>
               </span>
+              <textarea
+                value={pushDecision}
+                onChange={(e) => setPushDecision(e.target.value)}
+                onKeyDown={(e) => {
+                  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                    e.preventDefault();
+                    void sendPushDecision();
+                  }
+                }}
+                placeholder="Tu decisión (ej: commiteá reports.py · es WIP, dejalo) · Ctrl/⌘+Enter = enviar"
+                rows={2}
+                className="w-full resize-y rounded-md bg-zinc-950/40 border border-amber-500/30 px-2 py-1 text-amber-100 placeholder:text-amber-300/40 focus:outline-none focus:border-amber-400/60"
+              />
               <button
-                onClick={dismissPushStatus}
-                className="text-amber-200/70 hover:text-amber-100 shrink-0"
-                title="Descartar"
+                onClick={sendPushDecision}
+                disabled={!pushDecision.trim() || sendingDecision}
+                className="self-end px-3 py-1 rounded-md bg-amber-600 hover:bg-amber-500 disabled:opacity-40 disabled:cursor-default text-white font-medium transition-colors"
+                title="Crea una task con tu decisión y relanza un worker para ejecutarla"
               >
-                ✕
+                {sendingDecision ? "Enviando…" : "Responder"}
               </button>
             </span>
           ) : pushKind === "error" ? (
@@ -1310,6 +1510,76 @@ function ProjectPanel({
               {timeAgo(project.last_push_at, now)}
               <button
                 onClick={dismissPushStatus}
+                className="text-zinc-600 hover:text-zinc-400"
+                title="Descartar"
+              >
+                ✕
+              </button>
+            </span>
+          ))}
+        {project.last_pull_at &&
+          (pullKind === "confirm" ? (
+            // El sync no falló: hay una divergencia que el humano debe decidir.
+            // Respondés acá: tu decisión se vuelve una task y relanza un worker.
+            <span className="flex flex-col gap-2 px-2.5 py-2 rounded-md border border-amber-500/40 bg-amber-500/15 text-amber-300 w-full max-w-full">
+              <span className="inline-flex items-start gap-2">
+                <span className="min-w-0">
+                  <span className="font-medium">⚠ sync necesita tu decisión:</span>{" "}
+                  {pullStatusBody}{" "}
+                  <span className="text-amber-300/60">
+                    · {timeAgo(project.last_pull_at, now)}
+                  </span>
+                </span>
+                <button
+                  onClick={dismissPullStatus}
+                  className="text-amber-200/70 hover:text-amber-100 shrink-0 ml-auto"
+                  title="Descartar sin responder"
+                >
+                  ✕
+                </button>
+              </span>
+              <textarea
+                value={pullDecision}
+                onChange={(e) => setPullDecision(e.target.value)}
+                onKeyDown={(e) => {
+                  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                    e.preventDefault();
+                    void sendPullDecision();
+                  }
+                }}
+                placeholder="Tu decisión (ej: rebaseá mis cambios sobre remoto · descartá lo local) · Ctrl/⌘+Enter = enviar"
+                rows={2}
+                className="w-full resize-y rounded-md bg-zinc-950/40 border border-amber-500/30 px-2 py-1 text-amber-100 placeholder:text-amber-300/40 focus:outline-none focus:border-amber-400/60"
+              />
+              <button
+                onClick={sendPullDecision}
+                disabled={!pullDecision.trim() || sendingPullDecision}
+                className="self-end px-3 py-1 rounded-md bg-amber-600 hover:bg-amber-500 disabled:opacity-40 disabled:cursor-default text-white font-medium transition-colors"
+                title="Crea una task con tu decisión y relanza un worker para ejecutarla"
+              >
+                {sendingPullDecision ? "Enviando…" : "Responder"}
+              </button>
+            </span>
+          ) : pullKind === "error" ? (
+            <span className="inline-flex items-start gap-2 text-rose-400 max-w-full">
+              <span className="min-w-0">
+                último sync: error: {pullStatusBody} ·{" "}
+                {timeAgo(project.last_pull_at, now)}
+              </span>
+              <button
+                onClick={dismissPullStatus}
+                className="text-rose-300/70 hover:text-rose-200 shrink-0"
+                title="Descartar"
+              >
+                ✕
+              </button>
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-2 text-zinc-500">
+              último sync: {project.pull_status} ·{" "}
+              {timeAgo(project.last_pull_at, now)}
+              <button
+                onClick={dismissPullStatus}
                 className="text-zinc-600 hover:text-zinc-400"
                 title="Descartar"
               >
@@ -1401,41 +1671,42 @@ function ProjectPanel({
           {/* Agregar destino: se elige una rama REAL del remoto, sin tipear */}
           <div className="flex items-center gap-2 pt-1 border-t border-zinc-800">
             {(() => {
+              if (loadingRemote) {
+                return <span className="text-zinc-500">leyendo ramas del remoto…</span>;
+              }
               const taken = new Set(project.branches.map((b) => b.branch));
               const available = (remote?.branches ?? []).filter(
                 (b) => !taken.has(b)
               );
-              if (loadingRemote) {
-                return <span className="text-zinc-500">leyendo ramas del remoto…</span>;
-              }
-              if (!remote || remote.error) {
-                return (
-                  <span className="text-zinc-500">
-                    no hay ramas del remoto para elegir
-                    {remote?.error ? "" : " (probá ⟳)"}
-                  </span>
-                );
-              }
-              if (available.length === 0) {
-                return (
-                  <span className="text-zinc-500">
-                    todas las ramas del remoto ya son destinos
-                  </span>
-                );
-              }
+              // Sin lista de ramas para ofrecer (error, vacío, o todas ya son
+              // destinos) → solo queda escribir a mano. Si hay lista, el humano
+              // puede alternar entre elegirla y tipear (ej. `develop`, que
+              // todavía no existe en el remoto).
+              const noList = !remote || !!remote.error || available.length === 0;
+              const typing = manualBranch || noList;
               return (
                 <>
-                  <select
-                    value={newBranch}
-                    onChange={(e) => setNewBranch(e.target.value)}
-                    className="w-40 px-2 py-1 rounded-md bg-zinc-800/70 border border-zinc-700 text-zinc-100 font-mono outline-none focus:border-indigo-500 cursor-pointer"
-                  >
-                    {available.map((b) => (
-                      <option key={b} value={b}>
-                        {b}
-                      </option>
-                    ))}
-                  </select>
+                  {typing ? (
+                    <input
+                      value={newBranch}
+                      onChange={(e) => setNewBranch(e.target.value)}
+                      placeholder="nombre de rama (ej. develop)"
+                      className="w-44 px-2 py-1 rounded-md bg-zinc-800/70 border border-zinc-700 text-zinc-100 font-mono outline-none focus:border-indigo-500"
+                      onKeyDown={(e) => e.key === "Enter" && addDest()}
+                    />
+                  ) : (
+                    <select
+                      value={newBranch}
+                      onChange={(e) => setNewBranch(e.target.value)}
+                      className="w-40 px-2 py-1 rounded-md bg-zinc-800/70 border border-zinc-700 text-zinc-100 font-mono outline-none focus:border-indigo-500 cursor-pointer"
+                    >
+                      {available.map((b) => (
+                        <option key={b} value={b}>
+                          {b}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                   <span className="text-zinc-600">→</span>
                   <select
                     value={newStage}
@@ -1453,6 +1724,20 @@ function ProjectPanel({
                   >
                     + agregar
                   </button>
+                  {/* Alternar lista ↔ manual; solo si hay lista del remoto */}
+                  {!noList && (
+                    <button
+                      onClick={() => setManualBranch((v) => !v)}
+                      className="text-xs text-zinc-500 hover:text-zinc-300 underline decoration-dotted"
+                      title={
+                        typing
+                          ? "Elegir una rama de la lista del remoto"
+                          : "Escribir el nombre de la rama a mano (ej. una que aún no existe en el remoto)"
+                      }
+                    >
+                      {typing ? "elegir de la lista" : "escribir a mano"}
+                    </button>
+                  )}
                 </>
               );
             })()}
@@ -1524,6 +1809,7 @@ function ProjectPanel({
 
       {doc ? (
         <DocPanel
+          key={doc.id}
           doc={doc}
           workerRunning={project.worker_running}
           reload={reload}
@@ -1551,12 +1837,19 @@ function DocPanel({
   isTaskUnseen: (t: TaskView) => boolean;
   markTaskSeen: (taskId: number) => void;
 }) {
-  const [title, setTitle] = useState("");
-  const [body, setBody] = useState("");
+  // Borrador inicial desde localStorage (este panel se remonta al cambiar de
+  // proyecto/documento gracias al key={doc.id}, así que el lazy init alcanza).
+  const [title, setTitle] = useState(() => loadDraft(doc.id).title);
+  const [body, setBody] = useState(() => loadDraft(doc.id).body);
   const [images, setImages] = useState<PendingImage[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [busy, setBusy] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+
+  // Persistimos lo tipeado para que sobreviva el cambio de proyecto/doc y reloads.
+  useEffect(() => {
+    saveDraft(doc.id, { title, body });
+  }, [doc.id, title, body]);
 
   function addFiles(list: FileList | null | undefined) {
     const imgs = imagesFromTransfer(list);
@@ -1629,6 +1922,7 @@ function DocPanel({
         }`}
       >
         <input
+          id="new-task-title"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           onKeyDown={(e) => (e.metaKey || e.ctrlKey) && e.key === "Enter" && createTask()}
@@ -2116,13 +2410,8 @@ function TaskRow({
             <>
               {/* Hilo invertido: el input para escribir va arriba de todo y el
                   turno más nuevo queda siempre a la vista; el pedido original
-                  baja al fondo. Mientras haya una pregunta del sistema sin
-                  responder, ocultamos este campo: confunde con el input de
-                  respuesta (que vive dentro de la pregunta) y el humano termina
-                  escribiendo acá sin disparar la respuesta. */}
-              {openQuestions.length === 0 && (
-                <FollowupInput taskId={task.id} done={isDone} reload={reload} />
-              )}
+                  baja al fondo. */}
+              <FollowupInput taskId={task.id} done={isDone} reload={reload} />
 
               {/* Pedidos posteriores del humano, del más nuevo al más viejo.
                   Cada follow-up arrastra sus propias preguntas adentro. */}

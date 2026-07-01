@@ -542,12 +542,16 @@ const commands = {
       target_branch: project.target_branch,
       push_stage: project.push_stage,
       push_requested: !!project.push_requested,
+      // Sync remoto pedido por el humano: traé del remoto la rama destino e
+      // integrá los cambios locales sin pisar trabajo (fast-forward/rebase o,
+      // ante divergencia real, mark-pulled --needs-confirm). Ver SKILL.md.
+      pull_requested: !!project.pull_requested,
       promote,
       tasks_to_commit: tasks,
     };
     out(flags, data, (x) => {
       console.log(
-        `proyecto: ${x.project}  rama destino: ${x.target_branch}  push pedido: ${x.push_requested ? "SÍ" : "no"}`
+        `proyecto: ${x.project}  rama destino: ${x.target_branch}  push pedido: ${x.push_requested ? "SÍ" : "no"}  sync pedido: ${x.pull_requested ? "SÍ" : "no"}`
       );
       console.log(`proceso de promoción: ${x.promote.instructions}`);
       if (x.tasks_to_commit.length) {
@@ -624,6 +628,31 @@ const commands = {
         `push marcado (${status}) en ${project.name}` +
           (bumped ? ` · ${bumped} task(s) → ${project.push_stage}` : "")
       )
+    );
+  },
+
+  // The loop reports the sync (pull) result. Mirrors mark-pushed but does NOT
+  // touch task stages (a pull doesn't promote code anywhere):
+  //   (sin flags)         → ok
+  //   --error "mensaje"   → falló (rojo en la UI)
+  //   --needs-confirm "m" → no falló: divergencia que el humano debe decidir
+  //                          (ej. rama divergida que requiere merge/rebase
+  //                          manual). Ámbar, no rojo. Limpia pull_requested
+  //                          para no re-intentar en loop. (cwd-scoped)
+  "mark-pulled"(db, { flags }) {
+    const project = resolveProject(db, flags.project);
+    const isError = flags.error && flags.error !== true;
+    const needsConfirm = flags["needs-confirm"] && flags["needs-confirm"] !== true;
+    const status = isError
+      ? `error: ${flags.error}`
+      : needsConfirm
+        ? `confirm: ${flags["needs-confirm"]}`
+        : "ok";
+    db.prepare(
+      "UPDATE project SET pull_requested = 0, last_pull_at = datetime('now'), pull_status = ? WHERE id = ?"
+    ).run(status, project.id);
+    out(flags, { ok: true, project: project.name, status }, () =>
+      console.log(`sync marcado (${status}) en ${project.name}`)
     );
   },
 
@@ -745,6 +774,10 @@ Git (lo PIDE el humano desde la app; lo EJECUTA el loop — ver la skill):
          --needs-confirm = no falló pero necesitás que el humano decida (ámbar):
          promoción que requiere merge/PR, rama divergida, etc. Limpia el pedido
          para no re-intentar en loop; el humano resuelve en la UI.
+  taskapp mark-pulled [--error "msg"] [--needs-confirm "msg"]
+       → reportá el resultado del sync remoto (pull). Sin flags = ok.
+         --error = falló (rojo). --needs-confirm = divergencia que el humano
+         debe decidir (ámbar). No toca el stage de las tasks.
 
 Pasá --project "<nombre>" en cualquier comando para forzar un proyecto puntual.
 

@@ -246,6 +246,29 @@ Reportá el resultado:
 ⚠️ NUNCA fuerces un push (`--force`) ni resuelvas a ciegas una divergencia: ante
 la duda, `--needs-confirm` y que decida el humano.
 
+### Sync remoto (pull) — `pull_requested`
+
+`git-pending` también trae `pull_requested`. **Si es true**, el humano pidió
+traer del remoto la rama destino e integrar los cambios locales (lo mismo que
+hacés a mano cuando venís de otra máquina). Procedimiento:
+
+1. `git fetch origin` la rama destino (`target_branch`).
+2. Integrá SIN pisar trabajo local:
+   - Si el working tree está limpio y sólo estás *detrás*: fast-forward
+     (`git merge --ff-only origin/<target_branch>`).
+   - Si hay cambios locales sin commitear que no chocan: traé el remoto y
+     dejalos encima (stash/pop o el enfoque que corresponda).
+   - **Divergencia real** (commits locales + remotos que se pisan, o cambios
+     sin commitear que colisionan con lo que entra): NO resuelvas a ciegas.
+3. Reportá el resultado:
+   - Salió bien: `taskapp mark-pulled`.
+   - Divergencia que el humano debe decidir: `taskapp mark-pulled --needs-confirm
+     "<qué necesitás que decida>"` (ámbar; limpia el pedido).
+   - Falló de verdad (git/credenciales): `taskapp mark-pulled --error "<motivo>"`.
+
+⚠️ Igual que con push: NUNCA `--force`, NUNCA resuelvas una divergencia a ciegas.
+El sync NO deploya código a ningún lado → no toca el stage de las tasks.
+
 Nota: como git no separa archivos por tarea, el commit toma todo el working tree.
 Por eso conviene que cada task se commitee apenas se termina; si hay varias
 pendientes juntas, la primera se lleva los cambios y a las demás les asignás el

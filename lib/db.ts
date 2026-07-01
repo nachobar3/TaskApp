@@ -15,6 +15,9 @@ export interface Project {
   push_requested: number;
   last_push_at: string | null;
   push_status: string | null;
+  pull_requested: number;
+  last_pull_at: string | null;
+  pull_status: string | null;
   last_seen: string | null;
   push_stage: string;
   powered_off_at: string | null;
@@ -146,6 +149,7 @@ export function getState() {
   return projects.map((p) => ({
     ...p,
     push_requested: !!p.push_requested,
+    pull_requested: !!p.pull_requested,
     auto_worker: !!p.auto_worker,
     worker_running: pidAlive(p.worker_pid),
     branches: branches
@@ -241,6 +245,14 @@ export function createDocument(projectId: number, name: string) {
   return db()
     .prepare("INSERT INTO document (project_id, name) VALUES (?, ?)")
     .run(projectId, name).lastInsertRowid as number;
+}
+
+/** First document of a project (the default landing spot for new tasks). */
+export function firstDocumentId(projectId: number): number | undefined {
+  const row = db()
+    .prepare("SELECT id FROM document WHERE project_id = ? ORDER BY id LIMIT 1")
+    .get(projectId) as { id: number } | undefined;
+  return row?.id;
 }
 
 export function deleteDocument(id: number) {
@@ -360,6 +372,20 @@ export function setPushRequested(projectId: number, requested: boolean) {
 export function clearPushStatus(projectId: number) {
   db()
     .prepare("UPDATE project SET push_status = NULL, last_push_at = NULL WHERE id = ?")
+    .run(projectId);
+}
+
+/** Request a remote sync (pull): the worker will fetch + integrate on its next run. */
+export function setPullRequested(projectId: number, requested: boolean) {
+  db()
+    .prepare("UPDATE project SET pull_requested = ? WHERE id = ?")
+    .run(requested ? 1 : 0, projectId);
+}
+
+/** Clear the last sync result banner (pull_status / last_pull_at). */
+export function clearPullStatus(projectId: number) {
+  db()
+    .prepare("UPDATE project SET pull_status = NULL, last_pull_at = NULL WHERE id = ?")
     .run(projectId);
 }
 

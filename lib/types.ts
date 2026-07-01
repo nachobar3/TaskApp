@@ -82,6 +82,9 @@ export interface ProjectView {
   push_requested: boolean;
   last_push_at: string | null;
   push_status: string | null;
+  pull_requested: boolean;
+  last_pull_at: string | null;
+  pull_status: string | null;
   last_seen: string | null;
   push_stage: string;
   powered_off_at: string | null;

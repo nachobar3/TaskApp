@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  clearPullStatus,
   clearPushStatus,
   deleteProject,
   setAutoWorker,
@@ -39,6 +40,10 @@ export async function PATCH(
   // Dismiss the "último push" banner (e.g. a needs-confirm/error left pinned).
   if (body?.clear_push_status === true) {
     clearPushStatus(Number(id));
+  }
+  // Dismiss the "último sync" banner.
+  if (body?.clear_pull_status === true) {
+    clearPullStatus(Number(id));
   }
   return NextResponse.json({ ok: true });
 }
