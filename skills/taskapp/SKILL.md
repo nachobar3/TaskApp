@@ -144,9 +144,21 @@ Corré `taskapp help` para ver todos los comandos.
    (así evitás problemas de comillas/backticks en markdown largo):
    ```bash
    # 1) escribí /tmp/taskapp-summary.md con el resumen (ver plantilla abajo)
-   # 2) marcá done con el resumen y el stage:
-   taskapp done <taskId> --stage <local|develop|production> --summary-file /tmp/taskapp-summary.md
+   # 2) marcá done con el resumen, el stage y si dejó código:
+   taskapp done <taskId> --stage <local|develop|production> --commitable|--no-commitable --summary-file /tmp/taskapp-summary.md
    ```
+
+   **Declará si la task dejó código** con `--commitable` / `--no-commitable`
+   (obligatorio al cerrar): es lo que separa las tasks que el botón "Commit all"
+   toma de las que ignora.
+   - `--commitable`: tocaste archivos del repo (código, config, docs versionados)
+     — hay algo para commitear. En la UI se ve el tag **`‹› código`**.
+   - `--no-commitable`: task **informativa** (análisis, consulta, verificación,
+     "decile hola", revisar/responder algo) — no dejó nada para commitear. Se ve
+     el tag **`sin código`** y "Commit all" la **excluye**.
+   - En la duda, `--commitable` (mejor que se muestre para commitear que perder
+     un cambio en silencio).
+
    Más adelante, cuando lo subas a otro entorno, actualizá solo el stage:
    ```bash
    taskapp update-task <taskId> --stage develop
@@ -304,5 +316,6 @@ hash del commit que las incluyó.
 | Voy a correr algo largo | `taskapp heartbeat <id> --note "corriendo e2e (~30 min)"; <comando>` |
 | Preguntar | `taskapp ask <id> "..." --block` |
 | Ver respuestas | `taskapp questions --task <id> --answered --json` |
-| Terminar (con resumen) | `taskapp done <id> --stage develop --summary-file <ruta>` |
+| Terminar (con resumen) | `taskapp done <id> --stage develop --commitable --summary-file <ruta>` |
+| Terminar task informativa | `taskapp done <id> --stage local --no-commitable --summary-file <ruta>` |
 | Crear tarea | `taskapp add-task --title "..."` |

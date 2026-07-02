@@ -957,6 +957,9 @@ function ProjectPanel({
     .filter((t) => t.commit_requested).length;
 
   // Done tasks not yet committed (nor archived) — candidates for "commit all".
+  // Excluye las declaradas sin código (commitable === false): son informativas
+  // y "commit all" no las toma (ver requestCommitAllDone en lib/db.ts). Las no
+  // declaradas (null) se siguen contando, igual que en el backend.
   const tasksCommittable = project.documents
     .flatMap((d) => d.tasks)
     .filter(
@@ -964,7 +967,8 @@ function ProjectPanel({
         t.status === "done" &&
         !t.commit_hash &&
         !t.archived &&
-        !t.commit_requested
+        !t.commit_requested &&
+        t.commitable !== false
     ).length;
 
   // Destino de push activo y su proceso de promoción (cómo el worker entrega
@@ -2300,6 +2304,24 @@ function TaskRow({
               ✓ probada
             </span>
           )}
+          {/* Tag de código: solo cuando el worker/humano lo declaró.
+              true → tiene código (la toma «Commit all»); false → informativa
+              (excluida). null (sin declarar) no muestra tag. */}
+          {task.commitable === true ? (
+            <span
+              className="hidden sm:inline-flex items-center text-[0.625rem] px-1.5 py-0.5 rounded-full border border-sky-500/30 bg-sky-500/15 text-sky-300"
+              title="Tiene código para commitear — la toma «Commit all»"
+            >
+              ‹› código
+            </span>
+          ) : task.commitable === false ? (
+            <span
+              className="hidden sm:inline-flex items-center text-[0.625rem] px-1.5 py-0.5 rounded-full border border-zinc-700 bg-zinc-800/40 text-zinc-500"
+              title="Sin código (informativa) — «Commit all» la excluye"
+            >
+              sin código
+            </span>
+          ) : null}
           {task.archived ? (
             <button
               onClick={() => patch({ archived: false })}
@@ -2466,6 +2488,19 @@ function TaskRow({
                 className="h-4 w-4 accent-emerald-500"
               />
               probada
+            </label>
+
+            <label
+              className="flex items-center gap-1.5 text-sm text-zinc-400 cursor-pointer"
+              title="¿La task dejó código para commitear? Destildala si es informativa (análisis, consulta): «Commit all» la excluye."
+            >
+              <input
+                type="checkbox"
+                checked={task.commitable !== false}
+                onChange={(e) => patch({ commitable: e.target.checked })}
+                className="h-4 w-4 accent-sky-500"
+              />
+              con código
             </label>
 
             {/* commit / archivar: solo mobile — en desktop están en

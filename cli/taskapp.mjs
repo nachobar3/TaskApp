@@ -75,6 +75,16 @@ function readSummary(flags) {
   return undefined;
 }
 
+// ¿La task produjo código para commitear? El worker lo declara al terminar:
+//   --commitable     → 1 (tiene código; la toma "commit all")
+//   --no-commitable  → 0 (informativa / sin código; "commit all" la excluye)
+// Sin ninguno → undefined (no toca el valor; queda como estaba / NULL).
+function readCommitable(flags) {
+  if (flags["no-commitable"]) return 0;
+  if (flags.commitable) return 1;
+  return undefined;
+}
+
 // Build a human-readable, do-this-now instruction for the worker out of the
 // destination's promotion config. The worker reads this in `git-pending` and
 // follows it instead of assuming a plain push. `notes` (instrucciones libres
@@ -435,8 +445,15 @@ const commands = {
       sets.push("summary = ?");
       vals.push(summary);
     }
+    const commitable = readCommitable(flags);
+    if (commitable !== undefined) {
+      sets.push("commitable = ?");
+      vals.push(commitable);
+    }
     if (sets.length === 0)
-      fail("nothing to update (use --status/--stage/--title/--body/--summary)");
+      fail(
+        "nothing to update (use --status/--stage/--title/--body/--summary/--commitable/--no-commitable)"
+      );
     // Claiming a task counts as activity.
     if (flags.status === "in_progress") sets.push("last_heartbeat = datetime('now')");
     // Cambiar de status invalida la nota "qué estoy haciendo ahora".
@@ -476,6 +493,13 @@ const commands = {
       if (!["local", "develop", "production"].includes(s)) fail(`invalid stage: ${s}`);
       sets.push("stage = ?");
       vals.push(s);
+    }
+    // ¿Hubo código en el trabajo? Declararlo hace que "commit all" tome solo
+    // las tasks con código y deje afuera las informativas.
+    const commitable = readCommitable(flags);
+    if (commitable !== undefined) {
+      sets.push("commitable = ?");
+      vals.push(commitable);
     }
     const summary = readSummary(flags);
     // Si la task fue reabierta con follow-ups, el resumen responde el follow-up
@@ -745,17 +769,21 @@ Lectura (lo que el loop hace cada iteración):
   taskapp questions --task <taskId> [--json]
 
 Escritura (lo que el loop reporta):
-  taskapp update-task <taskId> [--status todo|in_progress|blocked|done] [--stage local|develop|production]
+  taskapp update-task <taskId> [--status todo|in_progress|blocked|done] [--stage local|develop|production] [--commitable|--no-commitable]
   taskapp heartbeat <taskId> [--note "corriendo suite e2e (~30 min)"]
        → "sigo trabajando en esta task" (llamalo cada tanto). La --note queda
          visible en la UI mientras dura un comando largo; un heartbeat sin
          --note la limpia.
-  taskapp done <taskId> [--stage develop] --summary-file <ruta>
+  taskapp done <taskId> [--stage develop] [--commitable|--no-commitable] --summary-file <ruta>
        → marca la task hecha + deja un resumen de lo que se hizo (OBLIGATORIO).
          Resumen: --summary "..."  |  --summary-file <ruta>  |  --summary-stdin
          Para markdown largo (con backticks/comillas) usá --summary-file.
          Si la task tenía follow-ups pendientes (el humano pidió más cosas sobre
          una task ya hecha), el resumen los responde y queda en el hilo.
+         --commitable / --no-commitable: declará si el trabajo dejó código para
+         commitear. --commitable (tocaste archivos del repo) hace que "commit
+         all" tome la task; --no-commitable (task informativa: análisis,
+         consulta, verificación) la deja afuera. En la duda, --commitable.
   taskapp ask <taskId> "pregunta para el humano" [--block] [--json]
        Pregunta en MARKDOWN (saltos de línea, listas, **negrita**). Para
        preguntas largas/con backticks/URLs usá --text-file <ruta> (o --text-stdin).

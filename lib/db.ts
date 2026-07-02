@@ -61,6 +61,7 @@ export interface Task {
   commit_requested: number;
   commit_hash: string | null;
   committed_at: string | null;
+  commitable: number | null;
   archived: number;
 }
 export interface Question {
@@ -173,6 +174,8 @@ export function getState() {
             tested: !!t.tested,
             archived: !!t.archived,
             commit_requested: !!t.commit_requested,
+            // NULL = sin declarar (se mantiene como null en la vista).
+            commitable: t.commitable == null ? null : !!t.commitable,
             questions: questions
               .filter((q) => q.task_id === t.id)
               .map((q) => ({
@@ -289,6 +292,7 @@ const TASK_FIELDS = [
   "stage",
   "summary",
   "archived",
+  "commitable",
 ] as const;
 
 export function updateTask(
@@ -296,7 +300,14 @@ export function updateTask(
   patch: Partial<
     Pick<
       Task,
-      "title" | "body" | "status" | "tested" | "stage" | "summary" | "archived"
+      | "title"
+      | "body"
+      | "status"
+      | "tested"
+      | "stage"
+      | "summary"
+      | "archived"
+      | "commitable"
     >
   >
 ) {
@@ -311,10 +322,15 @@ export function updateTask(
   if (patch.status) setParts.push("heartbeat_note = NULL");
   const values: Record<string, unknown> = { id };
   for (const k of keys) {
-    values[k] =
-      k === "tested" || k === "archived"
-        ? ((patch as never)[k] ? 1 : 0)
-        : (patch as never)[k];
+    if (k === "commitable") {
+      // Tri-estado: null = sin declarar, si no 1/0.
+      const v = (patch as never)[k];
+      values[k] = v == null ? null : v ? 1 : 0;
+    } else if (k === "tested" || k === "archived") {
+      values[k] = (patch as never)[k] ? 1 : 0;
+    } else {
+      values[k] = (patch as never)[k];
+    }
   }
   db()
     .prepare(
@@ -343,6 +359,11 @@ export function setCommitRequested(taskId: number, requested: boolean) {
 /**
  * Mark every done, not-yet-committed, not-archived task of a project as
  * pending commit. Returns how many tasks were newly flagged.
+ *
+ * Excluye las tasks marcadas como sin código (commitable = 0): son
+ * informativas y no tienen nada que commitear. Las no declaradas
+ * (commitable IS NULL, ej. tasks viejas) se siguen tomando para no perder
+ * commits silenciosamente — el humano igual puede pedir commit individual.
  */
 export function requestCommitAllDone(projectId: number): number {
   const info = db()
@@ -352,6 +373,7 @@ export function requestCommitAllDone(projectId: number): number {
            AND status = 'done'
            AND commit_hash IS NULL
            AND archived = 0
+           AND commitable IS NOT 0
            AND document_id IN (SELECT id FROM document WHERE project_id = ?)`
     )
     .run(projectId);

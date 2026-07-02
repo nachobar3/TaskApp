@@ -48,6 +48,9 @@ export interface TaskView {
   commit_requested: boolean;
   commit_hash: string | null;
   committed_at: string | null;
+  // ¿Produjo código para commitear? null = sin declarar, true = sí, false = no.
+  // "commit all" toma solo las que no son false.
+  commitable: boolean | null;
   archived: boolean;
   questions: QuestionView[];
   attachments: AttachmentView[];
