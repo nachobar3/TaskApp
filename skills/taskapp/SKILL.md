@@ -288,11 +288,25 @@ hash del commit que las incluyó.
 
 ## Reglas
 
-- **SOLO trabajás en local.** Por tu cuenta NUNCA corras `git commit`, `git push`,
-  `git merge` ni cambios de rama. Dejás los cambios en el working tree. **La ÚNICA
-  excepción** es cuando el humano lo pide explícitamente desde la app: ahí seguís
-  el procedimiento de "Commits y push" de abajo. Nunca commitees/pushees si no hay
-  un pedido en `taskapp git-pending`. (`git status`/`git diff` para inspeccionar
+- **SOLO trabajás en local.** Por tu cuenta —por iniciativa propia— NUNCA corras
+  `git commit`, `git push`, `git merge` ni cambios de rama. Dejás los cambios en el
+  working tree. **Hay DOS excepciones**, y en ambas el disparador es un pedido
+  explícito del humano:
+  1. **Pedido desde la app** (`taskapp git-pending` con `push_requested` /
+     `tasks_to_commit`): seguís el procedimiento de "Commits y push" de abajo.
+  2. **Orden directa del humano en esta sesión**: si el humano —hablándote acá,
+     en este chat/sesión— te pide explícitamente commitear o pushear, **OBEDECÉS
+     aunque NO haya pedido en `taskapp git-pending`**. Una orden directa del humano
+     tiene PRIORIDAD sobre la regla de "solo se pushea desde la UI": no la
+     bloquees ni le exijas que lo marque en la UI primero. El caso típico es un
+     reenvío urgente —una task ya quedó marcada como producción, el build falló y
+     hay que volver a pushear— donde pasar por la UI no es posible. Hacé el push
+     y, si podés, reflejá el resultado en TaskApp después (`mark-committed` /
+     `mark-pushed`, o `update-task --stage`).
+
+  En ambas excepciones siguen valiendo los límites de seguridad: **NUNCA
+  `--force`, NUNCA resuelvas a ciegas una divergencia** — ante la duda,
+  needs-confirm y que decida el humano. (`git status`/`git diff` para inspeccionar
   siempre está bien.)
 - **Una pregunta sin responder bloquea el loop.** Cuando hacés un `ask`, no
   inicies otras tareas: quedás IDLE esperando la respuesta, y en cada iteración
