@@ -1848,6 +1848,10 @@ function DocPanel({
   const [images, setImages] = useState<PendingImage[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Podés destildar "código" antes de disparar la task para marcarla como
+  // informativa (sin código) de entrada, sin tener que abrirla al final.
+  // Tildado = estado neutro (sin declarar → el worker lo confirma al cerrar).
+  const [withCode, setWithCode] = useState(true);
   const fileInput = useRef<HTMLInputElement>(null);
 
   // Persistimos lo tipeado para que sobreviva el cambio de proyecto/doc y reloads.
@@ -1880,12 +1884,16 @@ function DocPanel({
         document_id: doc.id,
         title,
         body,
+        // Solo declaramos si el humano destildó (sin código). Tildado = neutro
+        // (null): el worker declara el valor real al cerrar la task.
+        commitable: withCode ? null : false,
       });
       for (const img of images) await uploadAttachment(id, img.file);
       images.forEach((i) => URL.revokeObjectURL(i.url));
       setImages([]);
       setTitle("");
       setBody("");
+      setWithCode(true);
       await reload();
     } finally {
       setBusy(false);
@@ -1970,12 +1978,26 @@ function DocPanel({
         )}
 
         <div className="flex justify-between items-center">
-          <button
-            onClick={() => fileInput.current?.click()}
-            className="text-xs text-zinc-400 hover:text-indigo-400 transition-colors flex items-center gap-1"
-          >
-            📎 Adjuntar imagen
-          </button>
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => fileInput.current?.click()}
+              className="text-xs text-zinc-400 hover:text-indigo-400 transition-colors flex items-center gap-1"
+            >
+              📎 Adjuntar imagen
+            </button>
+            <label
+              className="flex items-center gap-1.5 text-xs text-zinc-400 cursor-pointer select-none"
+              title="Destildá si sabés que esta task no debe dejar código (informativa: análisis, consulta). «Commit all» la excluye. Tildado = sin declarar (el worker lo confirma al cerrar)."
+            >
+              <input
+                type="checkbox"
+                checked={withCode}
+                onChange={(e) => setWithCode(e.target.checked)}
+                className="h-3.5 w-3.5 accent-sky-500"
+              />
+              código
+            </label>
+          </div>
           <input
             ref={fileInput}
             type="file"
@@ -2306,21 +2328,24 @@ function TaskRow({
           )}
           {/* Tag de código: solo cuando el worker/humano lo declaró.
               true → tiene código (la toma «Commit all»); false → informativa
-              (excluida). null (sin declarar) no muestra tag. */}
+              (excluida). null (sin declarar) no muestra tag. Clickeable:
+              togglea commitable sin abrir la task (como el botón de commit). */}
           {task.commitable === true ? (
-            <span
-              className="hidden sm:inline-flex items-center text-[0.625rem] px-1.5 py-0.5 rounded-full border border-sky-500/30 bg-sky-500/15 text-sky-300"
-              title="Tiene código para commitear — la toma «Commit all»"
+            <button
+              onClick={() => patch({ commitable: false })}
+              className="hidden sm:inline-flex items-center text-[0.625rem] px-1.5 py-0.5 rounded-full border border-sky-500/30 bg-sky-500/15 text-sky-300 hover:border-zinc-600 hover:bg-zinc-800/60 hover:text-zinc-400 transition-colors"
+              title="Tiene código para commitear — la toma «Commit all». Click: marcar sin código."
             >
               ‹› código
-            </span>
+            </button>
           ) : task.commitable === false ? (
-            <span
-              className="hidden sm:inline-flex items-center text-[0.625rem] px-1.5 py-0.5 rounded-full border border-zinc-700 bg-zinc-800/40 text-zinc-500"
-              title="Sin código (informativa) — «Commit all» la excluye"
+            <button
+              onClick={() => patch({ commitable: true })}
+              className="hidden sm:inline-flex items-center text-[0.625rem] px-1.5 py-0.5 rounded-full border border-zinc-700 bg-zinc-800/40 text-zinc-500 hover:border-sky-500/40 hover:bg-sky-500/10 hover:text-sky-300 transition-colors"
+              title="Sin código (informativa) — «Commit all» la excluye. Click: marcar con código."
             >
               sin código
-            </span>
+            </button>
           ) : null}
           {task.archived ? (
             <button

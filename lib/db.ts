@@ -275,13 +275,20 @@ export function createTask(
   documentId: number,
   title: string,
   body = "",
-  createdBy = "user"
+  createdBy = "user",
+  commitable: boolean | null = null
 ) {
   return db()
     .prepare(
-      "INSERT INTO task (document_id, title, body, created_by) VALUES (?, ?, ?, ?)"
+      "INSERT INTO task (document_id, title, body, created_by, commitable) VALUES (?, ?, ?, ?, ?)"
     )
-    .run(documentId, title, body, createdBy).lastInsertRowid as number;
+    .run(
+      documentId,
+      title,
+      body,
+      createdBy,
+      commitable == null ? null : commitable ? 1 : 0
+    ).lastInsertRowid as number;
 }
 
 const TASK_FIELDS = [
