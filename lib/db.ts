@@ -387,6 +387,28 @@ export function requestCommitAllDone(projectId: number): number {
   return info.changes;
 }
 
+/**
+ * Archive every done task of a project that is already "cerrada de verdad":
+ * en producción (stage = 'production') o declarada sin código (commitable = 0,
+ * informativa: no hay nada que commitear ni deployar). Returns how many tasks
+ * were newly archived.
+ *
+ * No toca tasks todo/in_progress/blocked (aunque tengan stage production por
+ * error) ni las que ya están archivadas.
+ */
+export function archiveFinishedTasks(projectId: number): number {
+  const info = db()
+    .prepare(
+      `UPDATE task SET archived = 1, updated_at = datetime('now')
+         WHERE archived = 0
+           AND status = 'done'
+           AND (stage = 'production' OR commitable = 0)
+           AND document_id IN (SELECT id FROM document WHERE project_id = ?)`
+    )
+    .run(projectId);
+  return info.changes;
+}
+
 export function setPushRequested(projectId: number, requested: boolean) {
   db()
     .prepare("UPDATE project SET push_requested = ? WHERE id = ?")

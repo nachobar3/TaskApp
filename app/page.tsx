@@ -971,6 +971,18 @@ function ProjectPanel({
         t.commitable !== false
     ).length;
 
+  // Done tasks ya "cerradas de verdad" — en producción o sin código — que se
+  // pueden archivar en bloque con "Archivar terminadas". Mismo criterio que
+  // archiveFinishedTasks en lib/db.ts.
+  const tasksArchivable = project.documents
+    .flatMap((d) => d.tasks)
+    .filter(
+      (t) =>
+        t.status === "done" &&
+        !t.archived &&
+        (t.stage === "production" || t.commitable === false)
+    ).length;
+
   // Destino de push activo y su proceso de promoción (cómo el worker entrega
   // el código a esa rama). Determina el verbo del botón: push / promover / PR.
   const activeDest = project.branches.find(
@@ -1123,6 +1135,20 @@ function ProjectPanel({
     });
     if (!ok) return;
     await api(`/api/projects/${project.id}/commit-all`, "POST", {});
+    await reload();
+  }
+
+  // Archiva en bloque las tasks hechas que ya no necesitan seguimiento:
+  // en producción o declaradas sin código (informativas).
+  async function archiveFinished() {
+    if (tasksArchivable === 0) return;
+    const ok = await confirm({
+      title: "Archivar terminadas",
+      message: `Archivar las ${tasksArchivable} task(s) hechas que están en producción o son sin código.\n\nSe pueden desarchivar una por una desde la sección "Archivadas".`,
+      confirmLabel: "Archivar",
+    });
+    if (!ok) return;
+    await api(`/api/projects/${project.id}/archive-finished`, "POST", {});
     await reload();
   }
 
@@ -1428,6 +1454,15 @@ function ProjectPanel({
         >
           ⎇ Commit all
           {tasksCommittable > 0 ? ` · ${tasksCommittable}` : ""}
+        </button>
+        <button
+          onClick={archiveFinished}
+          disabled={tasksArchivable === 0}
+          className="px-3 py-1 rounded-md bg-zinc-700 hover:bg-zinc-600 disabled:opacity-40 disabled:cursor-default text-zinc-200 font-medium transition-colors"
+          title="Archiva todas las tasks hechas que están en producción o son sin código"
+        >
+          📦 Archivar terminadas
+          {tasksArchivable > 0 ? ` · ${tasksArchivable}` : ""}
         </button>
         {project.pull_requested ? (
           <span className="inline-flex items-center gap-2 px-2.5 py-1 rounded-md border border-amber-500/40 bg-amber-500/15 text-amber-300">
