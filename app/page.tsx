@@ -50,6 +50,19 @@ function timeAgo(ts: string, now: number): string {
   if (h < 24) return `hace ${h}h`;
   return `hace ${Math.floor(h / 24)}d`;
 }
+// Fecha + hora legible para mostrar en el header de la task (visible colapsada).
+// Compacto: "17 jul 13:24". Omite el año salvo que sea distinto al actual.
+function fmtDateTime(ts: string, now: number): string {
+  const d = new Date(ts.replace(" ", "T") + "Z");
+  const sameYear = d.getFullYear() === new Date(now).getFullYear();
+  return d.toLocaleString("es-AR", {
+    day: "2-digit",
+    month: "short",
+    year: sameYear ? undefined : "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
 
 // Timestamp (epoch ms) de la última "respuesta" que emitió el loop en una task:
 // si la creó el loop, si la terminó con resumen, o preguntas que hizo. Sirve
@@ -2265,6 +2278,13 @@ function TaskRow({
           className="flex-1 min-w-0 font-medium truncate cursor-pointer text-zinc-100"
         >
           {task.title}
+        </span>
+        <span
+          onClick={toggle}
+          className="shrink-0 text-[0.625rem] text-zinc-500 tabular-nums cursor-pointer"
+          title={`Creada ${fmtDateTime(task.created_at, now)}`}
+        >
+          🕑 {fmtDateTime(task.created_at, now)}
         </span>
         <div className="flex flex-wrap items-center justify-end gap-2 ml-auto">
           {task.created_by === "loop" && (
