@@ -314,6 +314,13 @@ const commands = {
       const openQ = db
         .prepare("SELECT COUNT(*) c FROM question WHERE task_id = ? AND answered = 0")
         .get(t.id).c;
+      // Preguntas YA respondidas: si las hay, esta task volvió de `blocked` con
+      // una decisión del humano en el hilo. Es una CONTINUACIÓN, no una task
+      // nueva: el worker DEBE leer el hilo con `show` y actuar sobre la última
+      // respuesta en vez de re-investigar y re-preguntar lo mismo (loop).
+      const answeredQ = db
+        .prepare("SELECT COUNT(*) c FROM question WHERE task_id = ? AND answered = 1")
+        .get(t.id).c;
       const attachments = db
         .prepare("SELECT path FROM attachment WHERE task_id = ? ORDER BY id")
         .all(t.id)
@@ -329,6 +336,7 @@ const commands = {
         tested: !!t.tested,
         document: docName[t.document_id],
         open_questions: openQ,
+        answered_questions: answeredQ,
         open_followups: openFollowups,
         attachments,
       };
@@ -340,6 +348,7 @@ const commands = {
             console.log(
               `#${t.id} [${t.status}] [${t.stage}]${t.tested ? " ✓tested" : ""}` +
                 `${t.open_questions ? ` (${t.open_questions} pregunta sin responder)` : ""}` +
+                `${!t.open_questions && t.answered_questions ? ` (↺ continuación: ${t.answered_questions} pregunta respondida — leé el hilo)` : ""}` +
                 `${t.open_followups.length ? ` (↩ ${t.open_followups.length} follow-up pendiente)` : ""}` +
                 `${t.attachments.length ? ` 📎${t.attachments.length}` : ""}  ${t.title}`
             )

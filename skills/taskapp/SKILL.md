@@ -81,6 +81,7 @@ Corré `taskapp help` para ver todos los comandos.
    ```
    Cada tarea trae `id`, `title`, `body`, `status`, `stage`, `tested`,
    `document`, `open_questions` (preguntas tuyas sin responder),
+   `answered_questions` (preguntas tuyas que el humano YA respondió),
    `open_followups` (pedidos posteriores del humano, ver abajo) y `attachments`
    (array de **rutas absolutas a imágenes** que el humano adjuntó).
 
@@ -88,12 +89,25 @@ Corré `taskapp help` para ver todos los comandos.
    antes de trabajar** — son capturas/imágenes que el humano sumó como contexto.
    (`taskapp show <id>` también las lista con el prefijo 📎.)
 
-   **Si la tarea trae `open_followups`, es una CONTINUACIÓN**: una task que ya
-   habías terminado y el humano reabrió pidiendo algo más *sobre esa misma
-   tarea*. El contexto es el hilo completo — leelo con `taskapp show <id> --json`:
-   body original, resumen de lo que ya se hizo, preguntas respondidas y los
-   follow-ups (resueltos y pendientes). No la trates como tarea nueva: retomá
-   sobre lo ya hecho y trabajá lo que piden los follow-ups pendientes.
+   ⛔ **Antes de trabajar CUALQUIER tarea, leé su hilo completo con
+   `taskapp show <id> --json`** (body, resumen previo, TODAS las preguntas con
+   sus respuestas, y los follow-ups). Esto es CRÍTICO en modo worker efímero:
+   cada worker arranca sin memoria, y si no leés el hilo re-hacés trabajo ya
+   decidido.
+
+   **Una tarea es una CONTINUACIÓN —NO una tarea nueva— si trae
+   `answered_questions > 0` o `open_followups`:**
+   - `answered_questions > 0`: hiciste una pregunta, el humano la respondió, y la
+     task volvió de `blocked` a `todo`. El humano YA DECIDIÓ. Tu trabajo es
+     **EJECUTAR lo que pidió en la última respuesta**, no volver a investigar.
+     ⛔ **NUNCA vuelvas a hacer la misma pregunta (ni una variante reformulada)
+     que ya está respondida en el hilo.** Si el humano ya dijo "sí, hacelo", lo
+     hacés. Re-preguntar lo ya respondido mete la task en un **loop infinito**
+     (cada worker efímero re-pregunta y nunca avanza). Solo abrí un `ask` nuevo
+     si surge una duda GENUINAMENTE distinta que el hilo no responde.
+   - `open_followups`: una task que ya habías terminado y el humano reabrió
+     pidiendo algo más *sobre esa misma tarea*. Retomá sobre lo ya hecho (body,
+     resumen previo, preguntas respondidas) y trabajá los follow-ups pendientes.
 
 2. **Tomá una tarea** y marcala en progreso:
    ```bash
