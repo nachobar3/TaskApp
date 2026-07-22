@@ -115,15 +115,31 @@ export function db(): Database.Database {
   return conn;
 }
 
-/** Is the given OS process still alive? (signal 0 = existence check) */
+/**
+ * Is the given worker process still alive? `process.kill(pid, 0)` only checks
+ * that *some* process owns that PID — and the OS recycles PIDs, so days after a
+ * worker exits its old PID can be reused by an unrelated process (e.g. a browser
+ * renderer). That false positive would pin `worker_running` on forever and block
+ * every future worker for the project (the spawn guard treats it as busy).
+ *
+ * So on Linux we also confirm the process is actually a `claude` worker by
+ * reading /proc/<pid>/cmdline. Where /proc isn't available we fall back to the
+ * bare existence check.
+ */
 export function pidAlive(pid: number | null): boolean {
   if (!pid) return false;
   try {
     process.kill(pid, 0);
-    return true;
   } catch {
     return false;
   }
+  try {
+    const cmdline = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8");
+    if (cmdline) return /claude/.test(cmdline);
+  } catch {
+    // No /proc (non-Linux) or race on read → trust the existence check above.
+  }
+  return true;
 }
 
 /** Full snapshot the UI polls — projects with nested documents, tasks, questions. */
