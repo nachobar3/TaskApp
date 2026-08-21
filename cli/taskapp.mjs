@@ -467,6 +467,9 @@ const commands = {
     if (flags.status === "in_progress") sets.push("last_heartbeat = datetime('now')");
     // Cambiar de status invalida la nota "qué estoy haciendo ahora".
     if (flags.status && flags.status !== true) sets.push("heartbeat_note = NULL");
+    // Terminar la task desde acá también sella done_at (timestamp estable de
+    // "terminada", que no mueven los cambios de stage/commit posteriores).
+    if (flags.status === "done") sets.push("done_at = datetime('now')");
     db.prepare(`UPDATE task SET ${sets.join(", ")}, updated_at = datetime('now') WHERE id = ?`).run(
       ...vals,
       id
@@ -495,7 +498,11 @@ const commands = {
     const id = Number(pos[0]);
     if (!id) fail("done requires a task id");
     if (!db.prepare("SELECT 1 FROM task WHERE id = ?").get(id)) fail(`task not found: ${id}`);
-    const sets = ["status = 'done'", "heartbeat_note = NULL"];
+    // done_at marca cuándo se terminó la task; a diferencia de updated_at no lo
+    // mueven los cambios de stage/commit posteriores (así el badge de la UI no
+    // se re-enciende por bookkeeping). Se re-sella si la task se re-termina tras
+    // reabrirse por follow-ups: esa nueva terminación sí es una novedad.
+    const sets = ["status = 'done'", "heartbeat_note = NULL", "done_at = datetime('now')"];
     const vals = [];
     if (flags.stage && flags.stage !== true) {
       const s = String(flags.stage);

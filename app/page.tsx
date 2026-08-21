@@ -70,7 +70,12 @@ function fmtDateTime(ts: string, now: number): string {
 function taskLoopActivityAt(t: TaskView): number {
   let max = 0;
   if (t.created_by === "loop") max = Math.max(max, parseUTC(t.created_at));
-  if (t.status === "done" && t.summary) max = Math.max(max, parseUTC(t.updated_at));
+  // Novedad "task terminada con resumen": usamos done_at (sellado una sola vez
+  // al terminar), NO updated_at, que se mueve con cada cambio de stage/commit/
+  // archivado y re-encendía el badge aunque el resumen ya lo hubieras visto.
+  // done_at ?? updated_at cubre filas viejas sin backfill (no debería pasar).
+  if (t.status === "done" && t.summary)
+    max = Math.max(max, parseUTC(t.done_at ?? t.updated_at));
   for (const q of t.questions) max = Math.max(max, parseUTC(q.created_at));
   for (const f of t.followups)
     if (f.resolved_at) max = Math.max(max, parseUTC(f.resolved_at));

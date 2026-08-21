@@ -42,6 +42,7 @@ export interface TaskView {
   created_by: string;
   created_at: string;
   updated_at: string;
+  done_at: string | null;
   last_heartbeat: string | null;
   heartbeat_note: string | null;
   summary: string | null;

@@ -55,6 +55,7 @@ export interface Task {
   created_by: string;
   created_at: string;
   updated_at: string;
+  done_at: string | null;
   last_heartbeat: string | null;
   heartbeat_note: string | null;
   summary: string | null;
@@ -343,6 +344,10 @@ export function updateTask(
   if (patch.status === "in_progress") setParts.push("last_heartbeat = datetime('now')");
   // Cambiar de status invalida la nota "qué estoy haciendo ahora" del worker.
   if (patch.status) setParts.push("heartbeat_note = NULL");
+  // Terminar la task sella done_at (timestamp estable de "terminada"): a
+  // diferencia de updated_at, no lo mueven los cambios de stage/commit
+  // posteriores, así el badge de novedad de la UI no se re-enciende por eso.
+  if (patch.status === "done") setParts.push("done_at = datetime('now')");
   const values: Record<string, unknown> = { id };
   for (const k of keys) {
     if (k === "commitable") {
