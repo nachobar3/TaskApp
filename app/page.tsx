@@ -63,6 +63,46 @@ function fmtDateTime(ts: string, now: number): string {
     minute: "2-digit",
   });
 }
+// Formatea una duración (en ms) de forma compacta: "45s", "2m 30s", "1h 5m",
+// "3d 2h". Se usa para mostrar cuánto tardó el worker en cada sesión.
+function fmtDuration(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) {
+    const rs = s % 60;
+    return rs ? `${m}m ${rs}s` : `${m}m`;
+  }
+  const h = Math.floor(m / 60);
+  if (h < 24) {
+    const rm = m % 60;
+    return rm ? `${h}h ${rm}m` : `${h}h`;
+  }
+  const d = Math.floor(h / 24);
+  const rh = h % 24;
+  return rh ? `${d}d ${rh}h` : `${d}d`;
+}
+
+// Cuánto tardó el worker en cada "sesión" de la task: el tiempo de trabajo antes
+// de hacer cada pregunta. Una sesión arranca cuando un worker toma la task
+// (started_at — el primer pickup, sin el tiempo que estuvo en cola; para tasks
+// viejas sin started_at caemos a created_at) o, para preguntas posteriores,
+// cuando el humano respondió la anterior; y termina cuando el worker hace la
+// pregunta y se bloquea. Devuelve questionId → ms.
+function sessionDurations(task: TaskView): Map<number, number> {
+  const sorted = [...task.questions].sort(
+    (a, b) => parseUTC(a.created_at) - parseUTC(b.created_at)
+  );
+  const out = new Map<number, number>();
+  let boundary = parseUTC(task.started_at ?? task.created_at);
+  for (const q of sorted) {
+    const asked = parseUTC(q.created_at);
+    out.set(q.id, Math.max(0, asked - boundary));
+    // La próxima sesión arranca cuando el humano responde esta pregunta.
+    boundary = q.answered && q.answered_at ? parseUTC(q.answered_at) : asked;
+  }
+  return out;
+}
 
 // Timestamp (epoch ms) de la última "respuesta" que emitió el loop en una task:
 // si la creó el loop, si la terminó con resumen, o preguntas que hizo. Sirve
@@ -96,6 +136,22 @@ type SeenMap = Record<number, number>;
 const PROJECT_SEEN_KEY = "taskapp:loopSeen";
 const TASK_SEEN_KEY = "taskapp:loopSeenTasks";
 const FIRSTRUN_KEY = "taskapp:firstRunAt";
+const SIDEBAR_COLLAPSED_KEY = "taskapp:sidebarCollapsed";
+function loadSidebarCollapsed(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+function persistSidebarCollapsed(collapsed: boolean) {
+  try {
+    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? "1" : "0");
+  } catch {
+    /* localStorage no disponible: el estado no persiste, no es crítico */
+  }
+}
 function loadSeen(key: string): SeenMap {
   if (typeof window === "undefined") return {};
   try {
@@ -239,6 +295,26 @@ export default function Home() {
   const [selectedDoc, setSelectedDoc] = useState<number | null>(null);
   // Drawer del sidebar en mobile (en md+ el sidebar es columna fija).
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // En md+ el sidebar se puede ocultar con un botón (persiste en localStorage).
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(loadSidebarCollapsed);
+  const toggleSidebarCollapsed = useCallback(() => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      persistSidebarCollapsed(next);
+      return next;
+    });
+  }, []);
+  // Ctrl/⌘ + B alterna el sidebar (patrón habitual de editores).
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.ctrlKey || e.metaKey) && (e.key === "b" || e.key === "B")) {
+        e.preventDefault();
+        toggleSidebarCollapsed();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toggleSidebarCollapsed]);
   const [seen, setSeen] = useState<SeenMap>(() => loadSeen(PROJECT_SEEN_KEY));
   const [taskSeen, setTaskSeen] = useState<SeenMap>(() => loadSeen(TASK_SEEN_KEY));
   const [firstRun] = useState(firstRunAt);
@@ -410,9 +486,9 @@ export default function Home() {
 
       {/* Sidebar: drawer deslizable en mobile, columna fija en md+ */}
       <div
-        className={`${
-          sidebarOpen ? "flex" : "hidden"
-        } md:flex fixed inset-y-0 left-0 z-40 md:static md:z-auto`}
+        className={`${sidebarOpen ? "flex" : "hidden"} ${
+          sidebarCollapsed ? "md:hidden" : "md:flex"
+        } fixed inset-y-0 left-0 z-40 md:static md:z-auto`}
       >
         <Sidebar
           projects={projects}
@@ -423,9 +499,33 @@ export default function Home() {
             setSelectedDoc(null);
             setSidebarOpen(false);
           }}
+          onCollapse={toggleSidebarCollapsed}
           reload={load}
         />
       </div>
+
+      {/* Botón para volver a mostrar el sidebar en desktop cuando está oculto */}
+      {sidebarCollapsed && (
+        <button
+          onClick={toggleSidebarCollapsed}
+          className="hidden md:flex fixed top-3 left-3 z-40 items-center justify-center p-1.5 rounded-md border border-zinc-800/80 bg-zinc-900/90 text-zinc-300 shadow-lg backdrop-blur hover:bg-zinc-800"
+          aria-label="Mostrar proyectos"
+          title="Mostrar proyectos (Ctrl/⌘ + B)"
+        >
+          <svg
+            className="h-5 w-5"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <rect x="3" y="4" width="18" height="16" rx="2" />
+            <path d="M9 4v16" />
+          </svg>
+        </button>
+      )}
 
       <main id="main-panel" tabIndex={-1} className="flex-1 overflow-y-auto bg-zinc-950 outline-none">
         {!project ? (
@@ -527,12 +627,14 @@ function Sidebar({
   selected,
   seen,
   onSelect,
+  onCollapse,
   reload,
 }: {
   projects: ProjectView[];
   selected: number | null;
   seen: SeenMap;
   onSelect: (id: number) => void;
+  onCollapse: () => void;
   reload: () => Promise<unknown>;
 }) {
   const [adding, setAdding] = useState(false);
@@ -607,12 +709,32 @@ function Sidebar({
     <aside data-sidebar className="w-64 shrink-0 border-r border-zinc-800/80 bg-zinc-900 flex flex-col">
       <div className="px-4 py-3.5 border-b border-zinc-800/80 flex items-center gap-2.5">
         <TasksLogo box="h-7 w-7 rounded-lg" icon="h-4 w-4" />
-        <div>
+        <div className="min-w-0">
           <h1 className="font-semibold text-zinc-100 leading-tight">TaskApp</h1>
           <p className="text-[0.6875rem] text-zinc-500 leading-tight">
             Control de loops de Claude
           </p>
         </div>
+        <button
+          onClick={onCollapse}
+          className="hidden md:flex ml-auto items-center justify-center p-1.5 -mr-1 rounded-md text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
+          aria-label="Ocultar proyectos"
+          title="Ocultar proyectos (Ctrl/⌘ + B)"
+        >
+          <svg
+            className="h-4 w-4"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <rect x="3" y="4" width="18" height="16" rx="2" />
+            <path d="M9 4v16" />
+            <path d="M15 9l-3 3 3 3" />
+          </svg>
+        </button>
       </div>
       <nav className="flex-1 overflow-y-auto p-2 space-y-1">
         {on.map((p) => (
@@ -2128,6 +2250,9 @@ function TaskRow({
   // Cada pregunta vive dentro del turno en que Claude la hizo, para que colapse
   // junto con ese turno (pedido original o follow-up) en vez de quedar suelta.
   const questionsByTurn = bucketQuestions(task);
+  // Cuánto tardó el worker en la sesión que terminó en cada pregunta (se muestra
+  // dentro de la caja verde/roja de cada pregunta).
+  const durations = sessionDurations(task);
   // Las tasks con novedad del loop sin ver arrancan expandidas al abrir el
   // proyecto; el resto, colapsadas.
   const [expanded, setExpanded] = useState(unseen);
@@ -2278,6 +2403,13 @@ function TaskRow({
             ✦
           </span>
         )}
+        <span
+          onClick={toggle}
+          className="shrink-0 text-[0.625rem] text-zinc-500 tabular-nums cursor-pointer"
+          title={`Task #${task.id}`}
+        >
+          #{task.id}
+        </span>
         <span
           onClick={toggle}
           className="flex-1 min-w-0 font-medium truncate cursor-pointer text-zinc-100"
@@ -2507,6 +2639,7 @@ function TaskRow({
                     key={f.id}
                     f={f}
                     questions={questionsByTurn.byFollowup.get(f.id) ?? []}
+                    durations={durations}
                     reload={reload}
                   />
                 ))}
@@ -2529,6 +2662,7 @@ function TaskRow({
                       key={f.id}
                       f={f}
                       questions={questionsByTurn.byFollowup.get(f.id) ?? []}
+                      durations={durations}
                       reload={reload}
                     />
                   ))}
@@ -2548,6 +2682,7 @@ function TaskRow({
                 isDone={isDone}
                 collapsible={task.followups.length > 0}
                 questions={questionsByTurn.original}
+                durations={durations}
                 reload={reload}
               />
             </>
@@ -2746,9 +2881,12 @@ function StatusBadge({ status }: { status: string }) {
 
 function QuestionBlock({
   q,
+  durationMs,
   reload,
 }: {
   q: TaskView["questions"][number];
+  // Cuánto tardó el worker en la sesión que terminó en esta pregunta.
+  durationMs?: number;
   reload: () => Promise<unknown>;
 }) {
   const [answer, setAnswer] = useState("");
@@ -2796,8 +2934,18 @@ function QuestionBlock({
   if (q.answered) {
     return (
       <div className="rounded-lg border border-zinc-800 bg-zinc-800/40 p-3">
-        <div className="text-[0.625rem] uppercase tracking-wide text-zinc-500 mb-1">
-          ❓ Pregunta
+        <div className="flex items-center justify-between gap-2 mb-1">
+          <span className="text-[0.625rem] uppercase tracking-wide text-zinc-500">
+            ❓ Pregunta
+          </span>
+          {durationMs != null && (
+            <span
+              className="text-[0.625rem] text-zinc-500 shrink-0"
+              title="Cuánto trabajó el worker en esta sesión antes de preguntar"
+            >
+              ⏱ {fmtDuration(durationMs)}
+            </span>
+          )}
         </div>
         <div className="md">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{q.text}</ReactMarkdown>
@@ -2837,8 +2985,18 @@ function QuestionBlock({
         addFiles(e.dataTransfer.files);
       }}
     >
-      <div className="text-[0.625rem] uppercase tracking-wide text-rose-300/80 mb-1">
-        ❓ Claude pregunta
+      <div className="flex items-center justify-between gap-2 mb-1">
+        <span className="text-[0.625rem] uppercase tracking-wide text-rose-300/80">
+          ❓ Claude pregunta
+        </span>
+        {durationMs != null && (
+          <span
+            className="text-[0.625rem] text-rose-300/60 shrink-0"
+            title="Cuánto trabajó el worker en esta sesión antes de preguntar"
+          >
+            ⏱ {fmtDuration(durationMs)}
+          </span>
+        )}
       </div>
       <div className="md">
         <ReactMarkdown remarkPlugins={[remarkGfm]}>{q.text}</ReactMarkdown>
@@ -2999,12 +3157,14 @@ function OriginalTurn({
   isDone,
   collapsible,
   questions,
+  durations,
   reload,
 }: {
   task: TaskView;
   isDone: boolean;
   collapsible: boolean;
   questions: TaskView["questions"];
+  durations: Map<number, number>;
   reload: () => Promise<unknown>;
 }) {
   const content = (
@@ -3033,7 +3193,12 @@ function OriginalTurn({
       {questions.length > 0 && (
         <div className="space-y-2">
           {[...questions].reverse().map((q) => (
-            <QuestionBlock key={q.id} q={q} reload={reload} />
+            <QuestionBlock
+              key={q.id}
+              q={q}
+              durationMs={durations.get(q.id)}
+              reload={reload}
+            />
           ))}
         </div>
       )}
@@ -3057,10 +3222,12 @@ function OriginalTurn({
 function FollowupBlock({
   f,
   questions,
+  durations,
   reload,
 }: {
   f: TaskView["followups"][number];
   questions: TaskView["questions"];
+  durations: Map<number, number>;
   reload: () => Promise<unknown>;
 }) {
   return (
@@ -3099,7 +3266,12 @@ function FollowupBlock({
       {questions.length > 0 && (
         <div className="mt-2 space-y-2">
           {[...questions].reverse().map((q) => (
-            <QuestionBlock key={q.id} q={q} reload={reload} />
+            <QuestionBlock
+              key={q.id}
+              q={q}
+              durationMs={durations.get(q.id)}
+              reload={reload}
+            />
           ))}
         </div>
       )}

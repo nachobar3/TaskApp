@@ -55,6 +55,8 @@ export interface Task {
   created_by: string;
   created_at: string;
   updated_at: string;
+  // Primer pickup de un worker (todo/blocked -> in_progress); no incluye cola.
+  started_at: string | null;
   done_at: string | null;
   last_heartbeat: string | null;
   heartbeat_note: string | null;
@@ -342,6 +344,10 @@ export function updateTask(
   const setParts = keys.map((k) => `${k} = @${k}`);
   // Claiming a task (status -> in_progress) counts as a heartbeat.
   if (patch.status === "in_progress") setParts.push("last_heartbeat = datetime('now')");
+  // Sella el arranque de la primera sesión (una sola vez): la UI mide la
+  // duración sin el tiempo en cola previo al primer pickup.
+  if (patch.status === "in_progress")
+    setParts.push("started_at = COALESCE(started_at, datetime('now'))");
   // Cambiar de status invalida la nota "qué estoy haciendo ahora" del worker.
   if (patch.status) setParts.push("heartbeat_note = NULL");
   // Terminar la task sella done_at (timestamp estable de "terminada"): a

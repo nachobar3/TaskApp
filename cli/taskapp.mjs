@@ -465,6 +465,10 @@ const commands = {
       );
     // Claiming a task counts as activity.
     if (flags.status === "in_progress") sets.push("last_heartbeat = datetime('now')");
+    // Sella el arranque de la primera sesión de trabajo (solo si aún no está):
+    // mide la duración sin el tiempo que la task pasó en cola antes del pickup.
+    if (flags.status === "in_progress")
+      sets.push("started_at = COALESCE(started_at, datetime('now'))");
     // Cambiar de status invalida la nota "qué estoy haciendo ahora".
     if (flags.status && flags.status !== true) sets.push("heartbeat_note = NULL");
     // Terminar la task desde acá también sella done_at (timestamp estable de
@@ -487,7 +491,12 @@ const commands = {
     if (!db.prepare("SELECT 1 FROM task WHERE id = ?").get(id)) fail(`task not found: ${id}`);
     const note = flags.note && flags.note !== true ? String(flags.note) : null;
     db.prepare(
-      "UPDATE task SET last_heartbeat = datetime('now'), heartbeat_note = ?, status = CASE WHEN status = 'done' THEN status ELSE 'in_progress' END WHERE id = ?"
+      "UPDATE task SET last_heartbeat = datetime('now'), heartbeat_note = ?, " +
+        // Si el heartbeat es lo que pone la task en progreso, sella también el
+        // arranque de la primera sesión (una sola vez, sin pisar los pickups
+        // posteriores; done no arranca sesión).
+        "started_at = CASE WHEN status = 'done' THEN started_at ELSE COALESCE(started_at, datetime('now')) END, " +
+        "status = CASE WHEN status = 'done' THEN status ELSE 'in_progress' END WHERE id = ?"
     ).run(note, id);
     out(flags, { ok: true, id }, () => console.log(`heartbeat task #${id}`));
   },

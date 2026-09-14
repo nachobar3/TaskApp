@@ -42,6 +42,9 @@ export interface TaskView {
   created_by: string;
   created_at: string;
   updated_at: string;
+  // Primer pickup de un worker (todo/blocked -> in_progress), sin tiempo de cola.
+  // La primera sesión de trabajo se mide desde acá; null en tasks viejas.
+  started_at: string | null;
   done_at: string | null;
   last_heartbeat: string | null;
   heartbeat_note: string | null;
