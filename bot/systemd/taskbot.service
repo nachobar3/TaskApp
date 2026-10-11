@@ -1,0 +1,21 @@
+[Unit]
+Description=TaskBot — bot de Telegram con Claude Code (TaskApp)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO_DIR@
+# node puede vivir fuera del PATH de systemd (mise, nvm): install.sh lo resuelve.
+Environment=PATH=@NODE_DIR@:/usr/local/bin:/usr/bin:/bin
+ExecStart=@NODE_DIR@/node @REPO_DIR@/bot/taskbot.mjs
+Restart=always
+RestartSec=5
+# El polling puede tardar en reconectar tras suspender: no lo matamos rápido.
+TimeoutStopSec=20
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=taskbot
+
+[Install]
+WantedBy=default.target
