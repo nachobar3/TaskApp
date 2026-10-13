@@ -584,11 +584,20 @@ function ProjectButton({
           <span className="absolute inline-flex h-full w-full rounded-full bg-rose-500 opacity-75 animate-ping" />
           <span className="relative inline-flex h-2 w-2 rounded-full bg-rose-500" />
         </span>
-      ) : on ? (
-        <span className="relative flex h-2 w-2 shrink-0" title="Loop activo">
+      ) : p.worker_running ? (
+        <span className="relative flex h-2 w-2 shrink-0" title="Worker corriendo">
           <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75 animate-ping" />
           <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
         </span>
+      ) : on ? (
+        // Prendido pero sin worker: verde apagado y quieto. El latido queda solo
+        // para cuando hay un loop corriendo de verdad.
+        <span
+          className="h-2 w-2 shrink-0 rounded-full bg-emerald-400/40"
+          title={
+            p.last_seen ? `prendido · loop visto ${timeAgo(p.last_seen, now)}` : "prendido"
+          }
+        />
       ) : (
         <span
           className="h-2 w-2 shrink-0 rounded-full bg-zinc-600"
@@ -654,9 +663,17 @@ function Sidebar({
   // El loop dejó novedades sin ver: produjo actividad después de la última vez
   // que abriste el proyecto. Se omite si hay preguntas abiertas (esas ya gritan
   // en rojo con su propio indicador).
+  // Apagarlo a mano también cuenta como "ya lo miré": si no, una novedad vieja
+  // lo volvía a prender para siempre (el apagado no la limpiaba). Además vive en
+  // la DB, así que vale para todos los dispositivos —a diferencia de `seen`, que
+  // es localStorage y no cruza del celular a la compu.
   const isUnseen = (p: ProjectView) =>
     openQuestionCount(p) === 0 &&
-    loopActivityAt(p) > (seen[p.id] ?? Number.MAX_SAFE_INTEGER);
+    loopActivityAt(p) >
+      Math.max(
+        seen[p.id] ?? Number.MAX_SAFE_INTEGER,
+        p.powered_off_at ? parseUTC(p.powered_off_at) : 0
+      );
 
   // "Prendido": worker corriendo, con preguntas abiertas, con una novedad del
   // loop que no miraste, o que el loop tocó alguna vez y no lo apagaste a mano.
