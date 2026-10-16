@@ -10,6 +10,7 @@ export interface WorkerModel {
 
 export const WORKER_MODELS: WorkerModel[] = [
   { alias: "opus", label: "Opus", hint: "máxima capacidad (último)" },
+  { alias: "fable", label: "Fable", hint: "creativo, buen escritor" },
   { alias: "sonnet", label: "Sonnet", hint: "rápido y muy capaz" },
   { alias: "haiku", label: "Haiku", hint: "el más rápido/barato" },
 ];
